@@ -6,6 +6,7 @@ on:
     paths:
       - 'daftar-kelas-vite-react-github-actions.zip'
       - '.github/workflows/build-from-zip.yml'
+      - '.github/scripts/patch-png-export.py'
   workflow_dispatch:
 
 permissions:
@@ -23,6 +24,8 @@ jobs:
           mkdir -p /tmp/daftar-kelas
           unzip -q daftar-kelas-vite-react-github-actions.zip -d /tmp/daftar-kelas
           cp -a /tmp/daftar-kelas/daftar-kelas-vite-react/. .
+      - name: Fix PNG sharing for Android WebView
+        run: python3 .github/scripts/patch-png-export.py
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
