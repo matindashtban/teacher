@@ -1,8 +1,18 @@
 from pathlib import Path
 import json
 root = Path('.')
-main = root / 'src/main.jsx'
-s = main.read_text(encoding='utf-8')
+candidates = []
+for candidate in root.rglob('*.jsx'):
+    try:
+        candidate_text = candidate.read_text(encoding='utf-8')
+    except Exception:
+        continue
+    if 'exportAttendanceImage' in candidate_text and 'saveOrSharePng' in candidate_text:
+        candidates.append((candidate, candidate_text))
+if not candidates:
+    raise SystemExit('Could not locate the app JSX file containing PNG export functions. Files: ' + ', '.join(str(p) for p in root.rglob('*.jsx')))
+main, s = candidates[0]
+project_root = main.parent.parent
 changes = 0
 def replace(old, new, label):
     global s, changes
@@ -86,7 +96,7 @@ replace("""        async function saveOrSharePng(blob, filename, title) {
             return 'downloaded';
         }""", 'native PNG share helper')
 main.write_text(s, encoding='utf-8')
-pkg = root / 'package.json'
+pkg = project_root / 'package.json'
 data = json.loads(pkg.read_text(encoding='utf-8'))
 data['dependencies']['@capacitor/filesystem'] = '7.1.4'
 data['dependencies']['@capacitor/share'] = '7.0.2'
