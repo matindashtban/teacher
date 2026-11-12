@@ -103,5 +103,5 @@ pkg = project_root / 'package.json'
 data = json.loads(pkg.read_text(encoding='utf-8'))
 data['dependencies']['@capacitor/filesystem'] = '7.1.4'
 data['dependencies']['@capacitor/share'] = '7.0.2'
-pkg.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\\n', encoding='utf-8')
+pkg.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 print(f'Applied {changes} PNG compatibility fixes and added Capacitor Filesystem/Share.')
