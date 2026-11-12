@@ -2,7 +2,9 @@ from pathlib import Path
 import json
 root = Path('.')
 candidates = []
-for candidate in root.rglob('*.jsx'):
+for candidate in root.rglob('*'):
+    if not candidate.is_file() or candidate.suffix.lower() not in ('.js', '.jsx', '.ts', '.tsx', '.html'):
+        continue
     try:
         candidate_text = candidate.read_text(encoding='utf-8')
     except Exception:
@@ -10,9 +12,10 @@ for candidate in root.rglob('*.jsx'):
     if 'exportAttendanceImage' in candidate_text and 'saveOrSharePng' in candidate_text:
         candidates.append((candidate, candidate_text))
 if not candidates:
-    raise SystemExit('Could not locate the app JSX file containing PNG export functions. Files: ' + ', '.join(str(p) for p in root.rglob('*.jsx')))
+    files = [str(p) for p in root.rglob('*') if p.is_file() and 'node_modules' not in p.parts]
+    raise SystemExit('Could not locate source containing PNG export functions. Project files: ' + ', '.join(files[:100]))
 main, s = candidates[0]
-project_root = main.parent.parent
+project_root = main.parent if (main.parent / 'package.json').exists() else main.parent.parent
 changes = 0
 def replace(old, new, label):
     global s, changes
