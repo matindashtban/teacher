@@ -23,9 +23,9 @@ jobs:
           test -f daftar-kelas-vite-react-github-actions.zip
           mkdir -p /tmp/daftar-kelas
           unzip -q daftar-kelas-vite-react-github-actions.zip -d /tmp/daftar-kelas
-          MAIN_FILE="$(find /tmp/daftar-kelas -path '*/src/main.jsx' -print -quit)"
-          test -n "$MAIN_FILE"
-          PROJECT_ROOT="$(dirname "$(dirname "$MAIN_FILE")")"
+          PACKAGE_FILE="$(find /tmp/daftar-kelas -name package.json -print -quit)"
+          test -n "$PACKAGE_FILE"
+          PROJECT_ROOT="$(dirname "$PACKAGE_FILE")"
           cp -a "$PROJECT_ROOT"/. .
       - name: Fix PNG sharing for Android WebView
         run: python3 .github/scripts/patch-png-export.py
