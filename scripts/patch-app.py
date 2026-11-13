@@ -540,19 +540,12 @@ s = s.replace(
 )
 
 # Show the saved student note in the expanded student profile.
-s = s.replace(
-    "React.createElement('li', null, \`شماره تماس مادر: \${s.motherPhone || '—'}\`)",
-    "React.createElement('li', null, \`شماره تماس مادر: \${s.motherPhone || '—'}\`),\n                                React.createElement('li', null, \`نکته: \${s.note || '—'}\`)",
-    1
-)
-
-
-# Ensure the teacher can see the saved note in the expanded student details.
-student_note_detail = "React.createElement('li', null, \`شماره تماس مادر: \${s.motherPhone || '—'}\`)"
+student_note_detail = """React.createElement('li', null, \`شماره تماس مادر: \${s.motherPhone || '—'}\`)"""
 assert student_note_detail in s, "Student detail list insertion point not found"
 s = s.replace(
     student_note_detail,
-    student_note_detail + ",\n                                React.createElement('li', { style: { color: s.note ? '#9A3412' : '#64748b', fontWeight: s.note ? 700 : 400, whiteSpace: 'pre-wrap' } }, \`📝 نکته: \${s.note || 'ثبت نشده'}\`)",
+    student_note_detail + """,
+                                React.createElement('li', { style: { color: s.note ? '#9A3412' : '#64748b', fontWeight: s.note ? 700 : 400, whiteSpace: 'pre-wrap' } }, \`📝 نکته: \${s.note || 'ثبت نشده'}\`)""",
     1
 )
 
