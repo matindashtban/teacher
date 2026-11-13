@@ -546,6 +546,16 @@ s = s.replace(
     1
 )
 
+
+# Ensure the teacher can see the saved note in the expanded student details.
+student_note_detail = "React.createElement('li', null, \`شماره تماس مادر: \${s.motherPhone || '—'}\`)"
+assert student_note_detail in s, "Student detail list insertion point not found"
+s = s.replace(
+    student_note_detail,
+    student_note_detail + ",\n                                React.createElement('li', { style: { color: s.note ? '#9A3412' : '#64748b', fontWeight: s.note ? 700 : 400, whiteSpace: 'pre-wrap' } }, \`📝 نکته: \${s.note || 'ثبت نشده'}\`)",
+    1
+)
+
 # Keep the selected tag chips RTL as well.
 s = s.replace(
     "selectedStudents.length > 0 && React.createElement('div', { className: 'flex flex-wrap gap-4', style: { marginBottom: 8 } },",
