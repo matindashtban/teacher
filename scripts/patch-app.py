@@ -539,13 +539,13 @@ s = s.replace(
     1
 )
 
-# Show the saved student note in the expanded student profile.
-student_note_detail = """React.createElement('li', null, \`شماره تماس مادر: \${s.motherPhone || '—'}\`)"""
-assert student_note_detail in s, "Student detail list insertion point not found"
+# Display the saved note directly under each student's name in the teacher's list.
+student_name_line = """                                        s.name, ' ', React.createElement('span', { style: { fontSize: 11, color: '#999' } }, expandedId === s.id ? '▲' : '▼')"""
+assert student_name_line in s, "Student name display insertion point not found"
 s = s.replace(
-    student_note_detail,
-    student_note_detail + """,
-                                React.createElement('li', { style: { color: s.note ? '#9A3412' : '#64748b', fontWeight: s.note ? 700 : 400, whiteSpace: 'pre-wrap' } }, \`📝 نکته: \${s.note || 'ثبت نشده'}\`)""",
+    student_name_line,
+    student_name_line + """,
+                                    s.note && React.createElement('div', { style: { marginTop: 4, fontSize: 12, lineHeight: 1.6, color: '#9A3412', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, '📝 نکته: ', s.note)""",
     1
 )
 
