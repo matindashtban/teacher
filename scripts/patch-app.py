@@ -240,6 +240,325 @@ notes_component = r'''        function TeacherNotes({ data, save, showToast }) {
         }'''
 s = s[:notes_start] + notes_component + s[notes_end:]
 
+
+
+# ------------------------------------------------------------
+# Requested UX updates: grade inheritance, student notes, cropper,
+# global day/night theme, RTL student tags and attendance cleanup.
+# ------------------------------------------------------------
+student_marker = "        function Students({ data, save, showToast }) {"
+st = s.index(student_marker)
+en = s.index("\n\n        function ", st + len(student_marker))
+student = s[st:en]
+
+student = student.replace(
+"""            const [photo, setPhoto] = React.useState('');
+
+            const students = data.students || [];
+""",
+"""            const [photo, setPhoto] = React.useState('');
+            const [studentNote, setStudentNote] = React.useState('');
+            const [cropSrc, setCropSrc] = React.useState('');
+            const [cropOpen, setCropOpen] = React.useState(false);
+            const [cropZoom, setCropZoom] = React.useState(1);
+            const [cropX, setCropX] = React.useState(50);
+            const [cropY, setCropY] = React.useState(50);
+
+            const students = data.students || [];
+            React.useEffect(() => {
+                if (!editingId && students.length) {
+                    const inherited = students[0].grade || guessGradeFromText(students[0].className);
+                    if (inherited) setGrade(inherited);
+                }
+            }, [students.length, editingId]);
+            const beginCrop = file => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    setCropSrc(String(reader.result || ''));
+                    setCropZoom(1); setCropX(50); setCropY(50);
+                    setCropOpen(true);
+                };
+                reader.onerror = () => showToast('خواندن عکس ممکن نشد', 'error');
+                reader.readAsDataURL(file);
+            };
+            const applyCrop = () => {
+                const image = new Image();
+                image.onload = () => {
+                    const side = Math.min(image.naturalWidth, image.naturalHeight) / cropZoom;
+                    const sx = (image.naturalWidth - side) * cropX / 100;
+                    const sy = (image.naturalHeight - side) * cropY / 100;
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 600; canvas.height = 600;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(image, sx, sy, side, side, 0, 0, 600, 600);
+                    setPhoto(canvas.toDataURL('image/jpeg', 0.78));
+                    setCropOpen(false); setCropSrc('');
+                };
+                image.onerror = () => showToast('برش عکس انجام نشد', 'error');
+                image.src = cropSrc;
+            };
+""",1)
+
+student = student.replace(
+"""                                photo: photo || s.photo || ''
+""",
+"""                                photo: photo || s.photo || '',
+                                note: studentNote.trim()
+""",1)
+student = student.replace(
+"""                        photo
+                    };
+""",
+"""                        photo,
+                        note: studentNote.trim()
+                    };
+""",1)
+student = student.replace(
+"""                setGrade('');
+                setPhoto('');
+                setEditingId(null);
+""",
+"""                setGrade(students.length ? (students[0].grade || guessGradeFromText(students[0].className)) : '');
+                setPhoto('');
+                setStudentNote('');
+                setEditingId(null);
+""",1)
+student = student.replace(
+"""                setPhoto(s.photo || '');
+                setEditingId(s.id);
+""",
+"""                setPhoto(s.photo || '');
+                setStudentNote(s.note || '');
+                setEditingId(s.id);
+""",1)
+student = student.replace(
+"""                setGrade('');
+                setEditingId(null);
+            };
+""",
+"""                setGrade(students.length ? (students[0].grade || guessGradeFromText(students[0].className)) : '');
+                setStudentNote('');
+                setEditingId(null);
+            };
+""",1)
+
+# New students inherit the first student's grade; only the first student selects it.
+student = student.replace(
+"""                if (!grade) {
+                    showToast('پایه‌ی دانش‌آموز را انتخاب کنید', 'error');
+                    return;
+                }
+""",
+"""                const effectiveGrade = editingId ? grade : (students.length ? (students[0].grade || guessGradeFromText(students[0].className) || grade) : grade);
+                if (!effectiveGrade) {
+                    showToast('برای ثبت اولین دانش‌آموز، ابتدا پایه را انتخاب کنید', 'error');
+                    return;
+                }
+""",1)
+student = student.replace("                                grade,\n                                className: GRADE_LABELS[grade] || '',",
+                        "                                grade: effectiveGrade,\n                                className: GRADE_LABELS[effectiveGrade] || '',",1)
+student = student.replace("                        grade,\n                        className: GRADE_LABELS[grade] || '',",
+                        "                        grade: effectiveGrade,\n                        className: GRADE_LABELS[effectiveGrade] || '',",1)
+
+# Replace photo picker with an editable crop workflow.
+old_photo = """                        photo ? React.createElement('img', { src: photo, alt: 'عکس دانش‌آموز', style: { width: 58, height: 58, borderRadius: '50%', objectFit: 'cover', border: '2px solid #1F8A94' } }) : null,
+                        React.createElement('label', { style: { flex: 1, display: 'block', padding: 10, border: '1px dashed #1F8A94', borderRadius: 10, cursor: 'pointer', textAlign: 'center' } },
+                            '📷 انتخاب عکس دانش‌آموز',
+                            React.createElement('input', { type: 'file', accept: 'image/*', style: { display: 'block', width: '100%', marginTop: 6 }, onChange: async e => { const f=e.target.files && e.target.files[0]; if(!f) return; try { setPhoto(await compressImage(f, 500, 0.65)); } catch(err) { showToast('خواندن عکس ممکن نشد','error'); } } })
+                        )
+"""
+new_photo = """                        photo ? React.createElement('img', { src: photo, alt: 'عکس دانش‌آموز', style: { width: 58, height: 58, borderRadius: '50%', objectFit: 'cover', border: '2px solid #1F8A94' } }) : null,
+                        React.createElement('label', { style: { flex: 1, display: 'block', padding: 10, border: '1px dashed #1F8A94', borderRadius: 10, cursor: 'pointer', textAlign: 'center' } },
+                            photo ? '📷 تغییر عکس / برش دوباره' : '📷 انتخاب عکس دانش‌آموز',
+                            React.createElement('input', { type: 'file', accept: 'image/*', style: { display: 'block', width: '100%', marginTop: 6 }, onChange: e => { const f=e.target.files && e.target.files[0]; if(f) beginCrop(f); e.target.value=''; } })
+                        )
+"""
+assert old_photo in student, "Student photo picker not found"
+student = student.replace(old_photo,new_photo,1)
+
+# Add private/important student note field.
+photo_anchor = "                    React.createElement('div', { className: 'mb-8', style: { display: 'flex', alignItems: 'center', gap: 10 } },"
+student = student.replace(photo_anchor,
+"""                    React.createElement('div', { className: 'mb-8' },
+                        React.createElement('label', { style: { display: 'block', fontWeight: 700, marginBottom: 6 } }, '📝 نکته (بیماری، مشکل خاص، شرایط خانوادگی و...)'),
+                        React.createElement('textarea', { rows: 3, value: studentNote, onChange: e => setStudentNote(e.target.value), placeholder: 'مثلاً حساسیت دارویی، بیماری، نیاز آموزشی ویژه یا شرایط خانوادگی...', style: { width: '100%', boxSizing: 'border-box', padding: 10, borderRadius: 8, resize: 'vertical' } })
+                    ),
+""" + photo_anchor,1)
+
+# Grade selector only for first student in a class (or when editing).
+grade_block = """                    React.createElement('div', { className: 'mb-8' },
+                        React.createElement('select', {
+                            value: grade,
+                            onChange: e => setGrade(e.target.value)
+                        },
+                            React.createElement('option', { value: '' }, 'پایه را انتخاب کنید...'),
+                            GRADE_ORDER.map(g => React.createElement('option', { key: g, value: g }, gradeName(g)))
+                        )
+                    ),
+"""
+new_grade_block = """                    (editingId || students.length === 0)
+                        ? React.createElement('div', { className: 'mb-8' },
+                            React.createElement('select', { value: grade, onChange: e => setGrade(e.target.value) },
+                                React.createElement('option', { value: '' }, 'پایه را انتخاب کنید...'),
+                                GRADE_ORDER.map(g => React.createElement('option', { key: g, value: g }, gradeName(g)))
+                            )
+                        )
+                        : React.createElement('div', { className: 'mb-8', style: { padding: 10, borderRadius: 8, background: '#E8F5F1', color: '#176B58' } },
+                            '🎓 پایه‌ی این دانش‌آموز به‌صورت خودکار از اولین دانش‌آموز کلاس تنظیم می‌شود: ',
+                            gradeName(students[0].grade || guessGradeFromText(students[0].className) || grade)
+                        ),
+"""
+assert grade_block in student, "Grade selector not found"
+student = student.replace(grade_block,new_grade_block,1)
+
+# Add crop dialog before the component's root close.
+student = student.replace(
+"""                )
+            );
+        }""",
+"""                ),
+                cropOpen && React.createElement('div', { style: { position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,.78)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 } },
+                    React.createElement('div', { dir: 'rtl', style: { width: '100%', maxWidth: 390, background: '#fff', color: '#222', borderRadius: 16, padding: 16, maxHeight: '90vh', overflowY: 'auto' } },
+                        React.createElement('h3', { style: { margin: '0 0 12px' } }, '✂️ برش عکس دانش‌آموز'),
+                        React.createElement('div', { style: { width: 260, height: 260, maxWidth: '100%', margin: '0 auto 14px', overflow: 'hidden', borderRadius: 12, background: '#111', border: '2px solid #1F8A94' } },
+                            React.createElement('img', { src: cropSrc, alt: 'پیش‌نمایش برش', style: { width: '100%', height: '100%', objectFit: 'cover', objectPosition: cropX + '% ' + cropY + '%', transform: 'scale(' + cropZoom + ')' } })
+                        ),
+                        React.createElement('label', { style: { display: 'block', marginBottom: 10 } }, 'بزرگ‌نمایی',
+                            React.createElement('input', { type: 'range', min: 1, max: 3, step: .05, value: cropZoom, onChange: e => setCropZoom(+e.target.value), style: { width: '100%' } })
+                        ),
+                        React.createElement('label', { style: { display: 'block', marginBottom: 10 } }, 'جابجایی افقی',
+                            React.createElement('input', { type: 'range', min: 0, max: 100, value: cropX, onChange: e => setCropX(+e.target.value), style: { width: '100%' } })
+                        ),
+                        React.createElement('label', { style: { display: 'block', marginBottom: 10 } }, 'جابجایی عمودی',
+                            React.createElement('input', { type: 'range', min: 0, max: 100, value: cropY, onChange: e => setCropY(+e.target.value), style: { width: '100%' } })
+                        ),
+                        React.createElement('div', { className: 'flex gap-8' },
+                            React.createElement('button', { className: 'btn-primary', onClick: applyCrop, style: { flex: 1 } }, '✔ تأیید برش'),
+                            React.createElement('button', { className: 'btn-ghost', onClick: () => { setCropOpen(false); setCropSrc(''); }, style: { flex: 1 } }, 'انصراف')
+                        )
+                    )
+                )
+            );
+        }""",1)
+
+s = s[:st] + student + s[en:]
+
+# RTL tag picker and per-student tag frequency counter.
+tag_marker = "        function TeacherNotes({ data, save, showToast }) {"
+ts = s.index(tag_marker)
+te = s.index("\n\n        // ============================================================\n        // برنامه هفتگی کلاس", ts)
+notes = s[ts:te]
+notes = notes.replace(
+"""            const selectedStudents = (form.studentIds || []).map(id => students.find(st => st.id === id)).filter(Boolean);
+""",
+"""            const selectedStudents = (form.studentIds || []).map(id => students.find(st => st.id === id)).filter(Boolean);
+            const tagCounts = {};
+            notes.forEach(note => (Array.isArray(note.studentIds) ? note.studentIds : []).forEach(id => { tagCounts[id] = (tagCounts[id] || 0) + 1; }));
+""",1)
+notes = notes.replace(
+"""                        React.createElement('div', { style: { maxHeight: 180, overflowY: 'auto', border: '1px solid #E5E7EB', borderRadius: 8, padding: 8 } },
+""",
+"""                        React.createElement('div', { dir: 'rtl', style: { direction: 'rtl', textAlign: 'right', maxHeight: 180, overflowY: 'auto', border: '1px solid #E5E7EB', borderRadius: 8, padding: 8 } },
+""",1)
+notes = notes.replace(
+"""                                    React.createElement('span', null, studentName(st))
+""",
+"""                                    React.createElement('span', { style: { flex: 1, textAlign: 'right' } }, studentName(st)),
+                                    React.createElement('small', { style: { color: '#64748b', whiteSpace: 'nowrap' } }, (tagCounts[st.id] || 0) + ' بار تگ شده')
+""",1)
+notes = notes.replace(
+"""                                React.createElement('div', { className: 'flex flex-wrap gap-4', style: { marginTop: 10 } },
+""",
+"""                                React.createElement('div', { dir: 'rtl', className: 'flex flex-wrap gap-4', style: { direction: 'rtl', justifyContent: 'flex-start', marginTop: 10 } },
+""",1)
+notes = notes.replace(
+"""                                    }, '👤 ', studentName(st)))
+""",
+"""                                    }, '👤 ', studentName(st), ' · ', (tagCounts[st.id] || 0), ' بار تگ‌شده'))
+""",1)
+s = s[:ts] + notes + s[te:]
+
+# Remove the old attendance-only night mode control.
+attendance_dark = """                    React.createElement('button', { className: cfg.darkMode ? 'btn-primary' : 'btn-ghost', onClick: () => save({ ...data, attendanceSettings: { ...cfg, darkMode: !cfg.darkMode } }) }, cfg.darkMode ? '☀️ حالت روز' : '🌙 حالت شب')),
+"""
+assert attendance_dark in s, "Attendance dark-mode button not found"
+s = s.replace(attendance_dark, "", 1)
+
+# Add app-wide persistent theme state in the main application component.
+teacher_start = s.index("        function TeacherApp({ data: rootData")
+teacher_end = s.index("\n\n        // ============================================================", teacher_start)
+teacher = s[teacher_start:teacher_end]
+teacher = teacher.replace(
+"""            const rootClasses = Array.isArray(rootData.classes) ? rootData.classes : [];
+""",
+"""            const rootClasses = Array.isArray(rootData.classes) ? rootData.classes : [];
+            const [darkMode, setDarkMode] = React.useState(() => {
+                try { return localStorage.getItem('teacherAppTheme') === 'dark'; } catch (_) { return false; }
+            });
+            React.useEffect(() => {
+                document.body.classList.toggle('app-dark', darkMode);
+                document.documentElement.style.colorScheme = darkMode ? 'dark' : 'light';
+                try { localStorage.setItem('teacherAppTheme', darkMode ? 'dark' : 'light'); } catch (_) {}
+                return () => { document.body.classList.remove('app-dark'); document.documentElement.style.colorScheme = ''; };
+            }, [darkMode]);
+""",1)
+teacher = teacher.replace(
+"""                    onWeekly: () => setWeeklyOpen(true)
+""",
+"""                    onWeekly: () => setWeeklyOpen(true),
+                    darkMode,
+                    onToggleDark: () => setDarkMode(v => !v)
+""",1)
+teacher = teacher.replace(
+"""            return React.createElement('div', { className: 'container' },
+""",
+"""            return React.createElement('div', { className: 'container app-shell' },
+""",1)
+s = s[:teacher_start] + teacher + s[teacher_end:]
+
+# Put global theme switch immediately to the left of the creator button.
+s = s.replace(
+"""        function AppHeader({ title, user, onLogout, onWeekly }) {""",
+"""        function AppHeader({ title, user, onLogout, onWeekly, darkMode, onToggleDark }) {""",1)
+creator_button = """                    onLogout && React.createElement('button', { onClick: () => window.alert('ساخته شده با ❤ توسط متین دشتبان برای معلمان دلسوز ایران زمین\\n\\ntelegram: @matindashtban'), className: 'btn-ghost text-small', style: { padding: '6px 10px', borderRadius: 10, fontSize: 12, cursor: 'pointer' } }, 'درباره سازنده')"""
+assert creator_button in s, "Creator button not found"
+s = s.replace(creator_button,
+"""                    React.createElement('button', { onClick: onToggleDark, className: 'btn-ghost text-small', title: darkMode ? 'تغییر به حالت روز' : 'تغییر به حالت شب', 'aria-label': 'تغییر حالت نمایش', style: { padding: '6px 10px', borderRadius: 10, fontSize: 12, cursor: 'pointer' } }, darkMode ? '☀️ حالت روز' : '🌙 حالت شب'),
+""" + creator_button,1)
+
+# Broad, app-wide dark palette (all tabs, cards, controls, dialogs and menus).
+dark_css = r"""
+<style id="global-theme-styles">
+body.app-dark{background:#0b1220!important;color:#e5e7eb!important;color-scheme:dark}
+body.app-dark .container{color:#e5e7eb}
+body.app-dark .header,body.app-dark .card,body.app-dark .class-manager-card,
+body.app-dark .tab-bar,body.app-dark .record-row,body.app-dark .modal-content,
+body.app-dark .attendance-calendar,body.app-dark .attendance-calendar-day{
+ background:#172235!important;color:#e5e7eb!important;border-color:#334155!important
+}
+body.app-dark .tab-bar button{color:#cbd5e1!important}
+body.app-dark .tab-bar button.active{background:#0f766e!important;color:#fff!important}
+body.app-dark input,body.app-dark textarea,body.app-dark select,
+body.app-dark button.btn-ghost,body.app-dark .attendance-calendar-day{
+ background:#0f172a!important;color:#e5e7eb!important;border-color:#475569!important
+}
+body.app-dark input::placeholder,body.app-dark textarea::placeholder{color:#94a3b8!important}
+body.app-dark .text-muted,body.app-dark .text-small{color:#a8b6c9}
+body.app-dark .empty-state,body.app-dark .badge{color:#e2e8f0}
+body.app-dark .attendance-calendar-day.selected{background:#134e4a!important;border-color:#2dd4bf!important}
+body.app-dark .attendance-calendar-day.holiday{background:#4c1d2a!important;color:#fecdd3!important}
+body.app-dark .record-row,body.app-dark .student-card,body.app-dark .list-item{background:#172235!important;color:#e5e7eb!important}
+body.app-dark table,body.app-dark th,body.app-dark td{border-color:#334155!important;color:#e5e7eb!important}
+body.app-dark .card[style*="background: #FCFBF7"],body.app-dark .card[style*="background:#FCFBF7"]{background:#172235!important}
+body.app-dark .modal,body.app-dark [role="dialog"]{color:#e5e7eb}
+body.app-dark .header-logo{filter:brightness(.9)}
+body.app-dark hr{border-color:#334155}
+</style>
+"""
+if 'id="global-theme-styles"' not in s:
+    s = s.replace("</head>", dark_css + "\n</head>", 1)
+
+
 rating = re.compile(r"\s*React\.createElement\('button', \{\s*onClick: function\(\) \{.*?\}, '⭐ ثبت نظر'\),", re.S)
 s, removed = rating.subn("\n", s, count=1)
 assert removed == 1, "Rating button not found"
