@@ -89,7 +89,7 @@ s, n = about.subn(about_new, s, count=1)
 assert n == 1, "AboutMe component not found"
 
 if 'native-files.bundle.js' not in s:
-    s = s.replace('</body>', '<script src="./native-files.bundle.js"></script>\n</body>', 1)
+    s = s.rsplit('</body>', 1)[0] + '<script src="./native-files.bundle.js"></script>\n</body>' + s.rsplit('</body>', 1)[1]
 
 p.write_text(s, encoding="utf-8")
 print("App patch applied")
