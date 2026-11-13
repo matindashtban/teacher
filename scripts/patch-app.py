@@ -483,6 +483,11 @@ attendance_dark = """                    React.createElement('button', { classNa
 """
 assert attendance_dark in s, "Attendance dark-mode button not found"
 s = s.replace(attendance_dark, "", 1)
+# The calendar control row must still close after removing its second button.
+calendar_only = "                    React.createElement('button', { className: calendarOpen ? 'btn-primary' : 'btn-ghost', onClick: () => setCalendarOpen(v => !v) }, calendarOpen ? 'بستن تقویم ماهانه' : '📅 تقویم شمسی ماهانه'),\n                calendarOpen &&"
+calendar_closed = "                    React.createElement('button', { className: calendarOpen ? 'btn-primary' : 'btn-ghost', onClick: () => setCalendarOpen(v => !v) }, calendarOpen ? 'بستن تقویم ماهانه' : '📅 تقویم شمسی ماهانه')),\n                calendarOpen &&"
+assert calendar_only in s, "Calendar control row marker not found"
+s = s.replace(calendar_only, calendar_closed, 1)
 
 # Add app-wide persistent theme state in the main application component.
 teacher_start = s.index("        function TeacherApp({ data: rootData")
@@ -525,6 +530,28 @@ assert creator_button in s, "Creator button not found"
 s = s.replace(creator_button,
 """                    React.createElement('button', { onClick: onToggleDark, className: 'btn-ghost text-small', title: darkMode ? 'تغییر به حالت روز' : 'تغییر به حالت شب', 'aria-label': 'تغییر حالت نمایش', style: { padding: '6px 10px', borderRadius: 10, fontSize: 12, cursor: 'pointer' } }, darkMode ? '☀️ حالت روز' : '🌙 حالت شب'),
 """ + creator_button,1)
+
+
+# Keep the active class's student form state isolated when switching classes.
+s = s.replace(
+    "tab === 'students' && React.createElement(Students, { data, save, showToast })",
+    "tab === 'students' && React.createElement(Students, { key: activeClass.id, data, save, showToast })",
+    1
+)
+
+# Show the saved student note in the expanded student profile.
+s = s.replace(
+    "React.createElement('li', null, \`شماره تماس مادر: \${s.motherPhone || '—'}\`)",
+    "React.createElement('li', null, \`شماره تماس مادر: \${s.motherPhone || '—'}\`),\n                                React.createElement('li', null, \`نکته: \${s.note || '—'}\`)",
+    1
+)
+
+# Keep the selected tag chips RTL as well.
+s = s.replace(
+    "selectedStudents.length > 0 && React.createElement('div', { className: 'flex flex-wrap gap-4', style: { marginBottom: 8 } },",
+    "selectedStudents.length > 0 && React.createElement('div', { dir: 'rtl', className: 'flex flex-wrap gap-4', style: { direction: 'rtl', justifyContent: 'flex-start', marginBottom: 8 } },",
+    1
+)
 
 # Broad, app-wide dark palette (all tabs, cards, controls, dialogs and menus).
 dark_css = r"""
