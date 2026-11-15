@@ -1,6 +1,6 @@
 {
   "name": "daftar-kelas-android",
-  "version": "10.2.0",
+  "version": "11.0.0",
   "private": true,
   "description": "Daftar Kelas Android and Windows app",
   "scripts": {
@@ -25,10 +25,23 @@
     "appId": "ir.daftarkelas.desktop",
     "productName": "Daftar Kelas",
     "asar": true,
-    "files": ["www/**/*", "desktop/**/*", "package.json"],
-    "directories": { "output": "release" },
+    "files": [
+      "www/**/*",
+      "desktop/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "artifactName": "Daftar-Kelas-Setup-${version}-${arch}.${ext}"
     },
     "nsis": {
