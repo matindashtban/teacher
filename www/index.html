@@ -4125,6 +4125,17 @@ body.app-dark option{background:#172235;color:#e5e7eb}
             const [showMore, setShowMore] = React.useState(false);
             const [editingId, setEditingId] = React.useState(null);
             const [view, setView] = React.useState({});       // open/closed overrides for months & tasks
+            const [selectedFolderId, setSelectedFolderId] = React.useState(null);
+            const [taskFolderId, setTaskFolderId] = React.useState('__default__');
+            const taskFolders = Array.isArray(data.taskFolders) ? data.taskFolders : [];
+            const folderList = (() => {
+                const out = taskFolders.filter(f => f && f.id && f.name).map(f => ({ id: String(f.id), name: String(f.name) }));
+                const known = new Set(out.map(f => f.id));
+                tasks.forEach(t => { if (t.folderId && !known.has(String(t.folderId))) { out.push({ id: String(t.folderId), name: 'پوشه دیگر' }); known.add(String(t.folderId)); } });
+                if (!known.has('__default__') || tasks.some(t => !t.folderId)) out.unshift({ id: '__default__', name: 'بدون پوشه' });
+                if (!out.length) out.push({ id: '__default__', name: 'بدون پوشه' });
+                return out;
+            })();
             const [rowFilter, setRowFilter] = React.useState('all'); // all | pending | problem
             const [menuId, setMenuId] = React.useState(null);
             const [histStudent, setHistStudent] = React.useState('all');
@@ -4162,6 +4173,35 @@ body.app-dark option{background:#172235;color:#e5e7eb}
             };
 
             const dueISO = () => dueMode==='none' ? '' : dueMode==='custom' ? customDue : addDays(assignedDate||todayISO(), dueMode==='d1'?1:dueMode==='d3'?3:7);
+            const createTaskFolder = async () => {
+                const name = (window.prompt('نام پوشه جدید تکالیف را وارد کنید:') || '').trim();
+                if (!name) return;
+                if (folderList.some(f => f.name.trim().toLocaleLowerCase('fa') === name.toLocaleLowerCase('fa'))) { showToast('پوشه‌ای با این نام وجود دارد.', 'error'); return; }
+                const folder = { id: uid(), name };
+                const result = await save(prev => ({ ...prev, taskFolders: [...(Array.isArray(prev.taskFolders) ? prev.taskFolders : []), folder] }));
+                if (result && result.ok === false) return showToast('ساخت پوشه ذخیره نشد.', 'error');
+                setSelectedFolderId(folder.id); setTaskFolderId(folder.id); showToast('پوشه ساخته شد.');
+            };
+            const renameTaskFolder = async folder => {
+                if (folder.id === '__default__') return showToast('نام پوشه پیش‌فرض قابل تغییر نیست.', 'error');
+                const name = (window.prompt('نام جدید پوشه:', folder.name) || '').trim();
+                if (!name || name === folder.name) return;
+                if (folderList.some(f => f.id !== folder.id && f.name.trim().toLocaleLowerCase('fa') === name.toLocaleLowerCase('fa'))) return showToast('پوشه‌ای با این نام وجود دارد.', 'error');
+                const result = await save(prev => ({ ...prev, taskFolders: (Array.isArray(prev.taskFolders) ? prev.taskFolders : []).map(f => f.id === folder.id ? { ...f, name } : f) }));
+                if (result && result.ok === false) showToast('تغییر نام پوشه ذخیره نشد.', 'error');
+            };
+            const deleteTaskFolder = async folder => {
+                if (folder.id === '__default__') return showToast('پوشه پیش‌فرض قابل حذف نیست.', 'error');
+                if (!window.confirm('پوشه «' + folder.name + '» حذف شود؟ تکالیف آن به پوشه «بدون پوشه» منتقل می‌شوند.')) return;
+                const result = await save(prev => ({ ...prev,
+                    taskFolders: (Array.isArray(prev.taskFolders) ? prev.taskFolders : []).filter(f => f.id !== folder.id),
+                    tasks: (Array.isArray(prev.tasks) ? prev.tasks : []).map(t => t.folderId === folder.id ? { ...t, folderId: '__default__' } : t)
+                }));
+                if (result && result.ok === false) return showToast('حذف پوشه ذخیره نشد.', 'error');
+                if (selectedFolderId === folder.id) setSelectedFolderId('__default__');
+                if (taskFolderId === folder.id) setTaskFolderId('__default__');
+                showToast('پوشه حذف و تکالیف آن منتقل شدند.');
+            };
             const resetForm = () => { setTitle(''); setDescription(''); setEditingId(null); setAssignedDate(todayISO()); setDueMode('d1'); setShowMore(false); };
 
             const createTask = async () => {
@@ -4171,6 +4211,7 @@ body.app-dark option{background:#172235;color:#e5e7eb}
                 const task = {
                     ...(old||{}),
                     id: editingId || uid(), title: title.trim(), type,
+                    folderId: taskFolderId || (old && old.folderId) || selectedFolderId || '__default__',
                     assignedDate: assignedDate || todayISO(), dueDate: dueISO(),
                     description: description.trim(),
                     statuses: (old && old.statuses) || {}
@@ -4184,14 +4225,14 @@ body.app-dark option{background:#172235;color:#e5e7eb}
                 }
             };
             const editTask = task => {
-                setEditingId(task.id); setTitle(task.title||''); setType(task.type||'other');
+                setEditingId(task.id); setTitle(task.title||''); setType(task.type||'other'); setTaskFolderId(task.folderId || '__default__');
                 setAssignedDate(task.assignedDate||todayISO()); setDescription(task.description||'');
                 if (task.dueDate) { setDueMode('custom'); setCustomDue(task.dueDate); } else setDueMode('none');
                 setShowMore(true); setMenuId(null);
                 window.scrollTo({top:0,behavior:'smooth'});
             };
             const duplicateTask = task => {
-                const copy = {id:uid(), title:task.title, type:task.type, assignedDate:todayISO(), dueDate:task.dueDate ? addDays(todayISO(), Math.max(1,(dayNum(task.dueDate)-dayNum(task.assignedDate||todayISO()))||1)) : '', description:task.description||'', statuses:{}};
+                const copy = {id:uid(), title:task.title, type:task.type, folderId:task.folderId || '__default__', assignedDate:todayISO(), dueDate:task.dueDate ? addDays(todayISO(), Math.max(1,(dayNum(task.dueDate)-dayNum(task.assignedDate||todayISO()))||1)) : '', description:task.description||'', statuses:{}};
                 persist([copy,...tasks], 'کپی ایجاد شد');
                 setView(v => ({...v, [copy.id]:true})); setMenuId(null);
             };
@@ -4312,6 +4353,10 @@ body.app-dark option{background:#172235;color:#e5e7eb}
                 h('input',{ref:titleRef,className:'hw-input',value:title,placeholder:'عنوان تکلیف (Enter = ثبت)',
                     onChange:e=>setTitle(e.target.value),onKeyDown:e=>{if(e.key==='Enter'&&!e.nativeEvent.isComposing)createTask();}}),
                 h('div',{className:'hw-grp'},
+                    h('div',{className:'hw-lbl'},'پوشه تکلیف'),
+                    h('select',{className:'hw-input',value:taskFolderId,onChange:e=>setTaskFolderId(e.target.value)},folderList.map(f=>h('option',{key:f.id,value:f.id},f.name)))
+                ),
+                h('div',{className:'hw-grp'},
                     h('div',{className:'hw-lbl'},'نوع تکلیف'),
                     h('div',{className:'hw-chips'},Object.entries(typeMeta).map(([k,m])=>h('button',{key:k,type:'button',className:'hw-chip'+(type===k?' on':''),onClick:()=>setType(k)},m.i+' '+m.n)))
                 ),
@@ -4392,8 +4437,11 @@ body.app-dark option{background:#172235;color:#e5e7eb}
 
             // ---- grouped list
             const monthNames = ['فروردین','اردیبهشت','خرداد','تیر','مرداد','شهریور','مهر','آبان','آذر','دی','بهمن','اسفند'];
+            const activeFolderId = selectedFolderId || '__default__';
+            const folderTasks = tasks.filter(task => (task.folderId || '__default__') === activeFolderId);
+            const activeFolder = folderList.find(f => f.id === activeFolderId) || folderList[0];
             const groups = {};
-            tasks.forEach(task=>{
+            folderTasks.forEach(task=>{
                 let key='unknown', label='بدون تاریخ';
                 try { const d=isoToJalali(task.assignedDate || todayISO()); key=String(d.jy)+'-'+String(d.jm).padStart(2,'0'); label=monthNames[d.jm-1]+' '+fa(d.jy); } catch(e) {}
                 if(!groups[key]) groups[key]={key,label,tasks:[],sort:key==='unknown'?'0000-00':key};
@@ -4401,9 +4449,22 @@ body.app-dark option{background:#172235;color:#e5e7eb}
             });
             const groupList = Object.values(groups).sort((a,b)=>b.sort.localeCompare(a.sort));
 
+            const folderScreen = h('div',{className:'hw-card'},
+                h('div',{className:'hw-head'}, h('h3',null,'📚 پوشه‌های تکالیف'), h('button',{type:'button',className:'hw-primary',onClick:createTaskFolder},'＋ پوشه جدید')),
+                h('div',{className:'hw-grid'}, folderList.map(folder => {
+                    const count = tasks.filter(t => (t.folderId || '__default__') === folder.id).length;
+                    return h('div',{key:folder.id,style:{border:'1px solid #dcece8',borderRadius:15,padding:12,background:'#f8fcfb',minWidth:0}},
+                        h('button',{type:'button',onClick:()=>{setSelectedFolderId(folder.id);setTaskFolderId(folder.id);setEditingId(null);},style:{width:'100%',border:0,background:'transparent',textAlign:'center',cursor:'pointer',fontFamily:'inherit',color:'#176b73',padding:'8px 4px'}},
+                            h('div',{style:{fontSize:32}},'📁'), h('strong',{style:{display:'block',marginTop:5}},folder.name), h('small',{style:{color:'#71817f'}},fa(count)+' تکلیف')),
+                        folder.id !== '__default__' && h('div',{style:{display:'flex',gap:6,justifyContent:'center',marginTop:5}},
+                            h('button',{type:'button',className:'hw-ghost',onClick:()=>renameTaskFolder(folder)},'✏️ تغییر نام'),
+                            h('button',{type:'button',className:'hw-ghost',onClick:()=>deleteTaskFolder(folder),style:{color:'#be123c'}},'🗑 حذف'))
+                    );
+                }))
+            );
             const list = h('div',{className:'hw-card'},
-                h('div',{className:'hw-head'},h('h3',null,'📋 فهرست تکالیف'),h('span',{style:{fontSize:13,color:'#64748b'}},fa(tasks.length)+' مورد • '+fa(students.length)+' دانش‌آموز')),
-                tasks.length===0 ? h('div',{className:'hw-empty'},'هنوز مورد تحویلی ثبت نشده است. از فرم بالا اولین تکلیف را تعریف کنید.') :
+                h('div',{className:'hw-head'},h('div',null,h('button',{type:'button',className:'hw-link',onClick:()=>{setSelectedFolderId(null);setEditingId(null);}},'← بازگشت به پوشه‌ها'),h('h3',{style:{margin:'5px 0 0'}},'📂 '+(activeFolder?.name || 'تکالیف'))),h('span',{style:{fontSize:13,color:'#64748b'}},fa(folderTasks.length)+' مورد • '+fa(students.length)+' دانش‌آموز')),
+                folderTasks.length===0 ? h('div',{className:'hw-empty'},'هنوز مورد تحویلی ثبت نشده است. از فرم بالا اولین تکلیف را تعریف کنید.') :
                 groupList.map((g,gi)=>{
                     const mk='month:'+g.key;
                     const open = view[mk]!==undefined ? view[mk] : gi===0;
@@ -4459,7 +4520,8 @@ body.app-dark option{background:#172235;color:#e5e7eb}
 
             return h('div',{className:'hw-wrap',onClick:e=>{ if(menuId && !e.target.closest('.hw-menu,.hw-dots')) setMenuId(null); }},
                 h('style',null,css),
-                form, list, hist,
+                selectedFolderId ? h(React.Fragment,null,form,list) : folderScreen,
+                hist,
                 undo && h('div',{className:'hw-undo'},h('span',null,undo.label),undoStack.length > 1 && h('span',{style:{opacity:.8,fontSize:12}},toPersianDigits(undoStack.length) + ' مورد قابل بازگردانی'),h('button',{onClick:doUndo},'↩ واگرد'))
             );
         }
@@ -5233,17 +5295,27 @@ body.app-dark option{background:#172235;color:#e5e7eb}
             });
         }
 
+        // ===== انتخاب تکالیف قابل درج در تصویر PNG =====
+        function getTaskPngOptions(data) {
+            return (Array.isArray(data.tasks) ? data.tasks : []).map(task => ({
+                key: String(task.id), id: String(task.id), title: task.title || 'تکلیف بدون عنوان',
+                date: task.assignedDate || '', dueDate: task.dueDate || '', type: task.type || 'other',
+                folder: (Array.isArray(data.taskFolders) ? data.taskFolders : []).find(f => f.id === task.folderId)?.name || (task.folderId ? 'پوشه دیگر' : 'بدون پوشه')
+            })).sort((a,b) => String(b.date).localeCompare(String(a.date)) || a.title.localeCompare(b.title,'fa'));
+        }
+
         // ===== داده‌ی هر تب برای لیست والدین =====
-        function buildRosterRequest(tab, data, selectedExamKeys) {
+        function buildRosterRequest(tab, data, selectedExamKeys, selectedTaskIds) {
             const students = (Array.isArray(data.students) ? data.students : []);
             const row = (s, cells) => ({ name: attNameOf(s), photo: s.photo || '', cells });
             const today = todayISO();
             if (tab === 'tasks') {
-                const tasks = Array.isArray(data.tasks) ? data.tasks : [];
-                const dates = tasks.map(t => t.assignedDate).filter(Boolean).sort();
-                const day = dates.includes(today) ? today : dates[dates.length - 1];
-                const dayTasks = tasks.filter(t => t.assignedDate === day);
+                const selected = new Set(Array.isArray(selectedTaskIds) ? selectedTaskIds.map(String) : []);
+                const allTasks = Array.isArray(data.tasks) ? data.tasks : [];
+                const dayTasks = allTasks.filter(t => selected.has(String(t.id)));
                 if (!dayTasks.length || !students.length) return null;
+                const dates = dayTasks.map(t => t.assignedDate).filter(Boolean).sort();
+                const day = dates.length ? dates[dates.length - 1] : today;
                 const TS = { done: { t: '✓ تحویل داد', ...BADGE.good }, incomplete: { t: '½ ناقص', ...BADGE.warn }, missing: { t: '✕ انجام نداد', ...BADGE.bad }, pending: { t: 'بررسی نشده', ...BADGE.none } };
                 const out = [];
                 for (let i = 0; i < dayTasks.length; i += 3) {
@@ -5665,6 +5737,9 @@ body.app-dark option{background:#172235;color:#e5e7eb}
             const [examPngPickerOpen, setExamPngPickerOpen] = React.useState(false);
             const [selectedExamPngKeys, setSelectedExamPngKeys] = React.useState([]);
             const [examPngSearch, setExamPngSearch] = React.useState('');
+            const [taskPngPickerOpen, setTaskPngPickerOpen] = React.useState(false);
+            const [selectedTaskPngIds, setSelectedTaskPngIds] = React.useState([]);
+            const [taskPngSearch, setTaskPngSearch] = React.useState('');
             const [dashboardOverlayOpen, setDashboardOverlayOpen] = React.useState(false);
             const [weeklyOpen, setWeeklyOpen] = React.useState(false);
             const [storageEstimate, setStorageEstimate] = React.useState(null);
@@ -6048,6 +6123,11 @@ body.app-dark option{background:#172235;color:#e5e7eb}
                 ),
                 ['tasks', 'exams', 'scores'].includes(tab) && React.createElement('div', { className: 'card', style: { display: 'flex', justifyContent: 'center' } },
                     React.createElement('button', { onClick: async () => {
+                        if (tab === 'tasks') {
+                            const options = getTaskPngOptions(data);
+                            if (!options.length) return showToast('هنوز تکلیفی برای تهیه تصویر ثبت نشده است.', 'error');
+                            setSelectedTaskPngIds([]); setTaskPngSearch(''); setTaskPngPickerOpen(true); return;
+                        }
                         if (tab === 'exams') {
                             const options = getExamPngOptions(data);
                             if (!options.length) return showToast('هنوز آزمونی برای تهیه تصویر ثبت نشده است.', 'error');
@@ -6060,6 +6140,38 @@ body.app-dark option{background:#172235;color:#e5e7eb}
                         if (!req) return showToast('داده‌ای برای این لیست وجود ندارد', 'error');
                         try { const r = await exportRosterPng(req); if (r !== 'cancelled') showToast(r === 'shared' ? '📤 لیست آماده‌ی ارسال شد' : '📥 تصویر لیست ذخیره شد'); } catch (e) { console.error(e); showToast('خطا در ساخت تصویر', 'error'); }
                     } }, '📷 تصویر لیست برای والدین (PNG)')),
+                taskPngPickerOpen && tab === 'tasks' && (() => {
+                    const options = getTaskPngOptions(data);
+                    const selectedCount = selectedTaskPngIds.length;
+                    const q = taskPngSearch.trim().toLocaleLowerCase('fa');
+                    const visible = options.filter(x => [x.title,x.folder,x.date,x.date ? toShamsi(x.date) : '',x.dueDate ? toShamsi(x.dueDate) : ''].join(' ').toLocaleLowerCase('fa').includes(q));
+                    const toggle = id => setSelectedTaskPngIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev,id]);
+                    const exportSelected = async () => {
+                        if (!selectedCount) return showToast('حداقل یک تکلیف را انتخاب کنید.', 'error');
+                        const req = buildRosterRequest('tasks', data, null, selectedTaskPngIds);
+                        if (!req) return showToast('برای تکالیف انتخاب‌شده اطلاعاتی پیدا نشد.', 'error');
+                        setTaskPngPickerOpen(false);
+                        try { const r = await exportRosterPng(req); if (r !== 'cancelled') showToast(r === 'shared' ? '📤 تصویر تکالیف انتخاب‌شده آماده ارسال است.' : '📥 تصویر تکالیف انتخاب‌شده ذخیره شد.'); }
+                        catch(e) { console.error(e); showToast('خطا در ساخت تصویر تکالیف.', 'error'); }
+                    };
+                    const field = { border:'1px solid #d6e4e1', borderRadius:11, padding:'12px 13px', fontFamily:'inherit', fontSize:13, background:'#fbfefd' };
+                    return React.createElement('div',{role:'dialog','aria-modal':true,style:{position:'fixed',inset:0,zIndex:10050,background:'rgba(15,35,45,.58)',display:'flex',alignItems:'center',justifyContent:'center',padding:14}},
+                        React.createElement('div',{className:'card',style:{width:'min(560px,100%)',maxHeight:'88vh',overflow:'auto',borderRadius:20,padding:18,boxShadow:'0 18px 60px rgba(0,0,0,.25)'}},
+                            React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}},
+                                React.createElement('div',null,React.createElement('h3',{style:{margin:0,color:'#176b73'}},'📷 انتخاب تکالیف برای تصویر PNG'),React.createElement('div',{className:'text-small text-muted',style:{marginTop:5}},'فقط وضعیت تکالیفی که انتخاب می‌کنید در تصویر قرار می‌گیرد.')),
+                                React.createElement('button',{type:'button',onClick:()=>setTaskPngPickerOpen(false),style:{border:0,background:'#f1f5f5',borderRadius:10,padding:'7px 11px',cursor:'pointer'}},'✕')),
+                            React.createElement('input',{type:'search',value:taskPngSearch,onChange:e=>setTaskPngSearch(e.target.value),placeholder:'🔎 جستجو بر اساس عنوان، پوشه یا تاریخ...', 'aria-label':'جستجو در تکالیف',style:{...field,width:'100%',boxSizing:'border-box',margin:'14px 0 10px'}}),
+                            React.createElement('div',{style:{display:'flex',gap:8,flexWrap:'wrap',margin:'4px 0 14px'}},
+                                React.createElement('button',{type:'button',onClick:()=>setSelectedTaskPngIds(prev=>Array.from(new Set([...prev,...visible.map(x=>x.id)]))),style:{border:'1px solid #b9d9d5',borderRadius:9,background:'#effaf8',padding:'7px 11px',cursor:'pointer',fontFamily:'inherit'}},'انتخاب موارد نمایش‌داده‌شده'),
+                                React.createElement('button',{type:'button',onClick:()=>setSelectedTaskPngIds([]),style:{border:'1px solid #e1e7e7',borderRadius:9,background:'#fff',padding:'7px 11px',cursor:'pointer',fontFamily:'inherit'}},'لغو انتخاب همه'),
+                                React.createElement('span',{className:'text-small text-muted',style:{alignSelf:'center',marginRight:'auto'}},`${toPersianDigits(selectedCount)} از ${toPersianDigits(options.length)} تکلیف انتخاب شده`)),
+                            React.createElement('div',{style:{display:'grid',gap:8}},visible.length ? visible.map(item=>React.createElement('label',{key:item.id,style:{display:'flex',alignItems:'center',gap:10,padding:'11px 12px',border:selectedTaskPngIds.includes(item.id)?'1.5px solid #48aaa0':'1px solid #e3ecea',background:selectedTaskPngIds.includes(item.id)?'#f0faf8':'#fff',borderRadius:12,cursor:'pointer'}},
+                                React.createElement('input',{type:'checkbox',checked:selectedTaskPngIds.includes(item.id),onChange:()=>toggle(item.id),style:{width:18,height:18,accentColor:'#16877d'}}),
+                                React.createElement('span',{style:{flex:1,minWidth:0}},React.createElement('strong',{style:{display:'block',fontSize:13}},item.title),React.createElement('small',{style:{color:'#71817f'}},`${item.folder} · ${item.date?toShamsi(item.date):'بدون تاریخ'}${item.dueDate?' · مهلت '+toShamsi(item.dueDate):''}`)))) : React.createElement('div',{className:'text-small text-muted',style:{textAlign:'center',padding:22,background:'#f7faf9',borderRadius:12}},'تکلیفی با این عبارت پیدا نشد.')),
+                            React.createElement('div',{style:{display:'flex',gap:9,marginTop:16}},
+                                React.createElement('button',{type:'button',onClick:()=>setTaskPngPickerOpen(false),style:{flex:1,border:'1px solid #dce6e5',background:'#fff',borderRadius:11,padding:12,cursor:'pointer',fontFamily:'inherit'}},'انصراف'),
+                                React.createElement('button',{type:'button',disabled:!selectedCount,onClick:exportSelected,style:{flex:2,border:0,background:selectedCount?'#16877d':'#aab8b6',color:'#fff',borderRadius:11,padding:12,fontWeight:800,cursor:selectedCount?'pointer':'not-allowed',fontFamily:'inherit'}},`ساخت تصویر از ${toPersianDigits(selectedCount)} تکلیف انتخاب‌شده`))));
+                })(),
                 examPngPickerOpen && tab === 'exams' && (() => {
                     const options = getExamPngOptions(data);
                     const selectedCount = selectedExamPngKeys.length;
