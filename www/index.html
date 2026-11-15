@@ -4131,8 +4131,8 @@ body.app-dark option{background:#172235;color:#e5e7eb}
             const folderList = (() => {
                 const out = taskFolders.filter(f => f && f.id && f.name).map(f => ({ id: String(f.id), name: String(f.name) }));
                 const known = new Set(out.map(f => f.id));
-                tasks.forEach(t => { if (t.folderId && !known.has(String(t.folderId))) { out.push({ id: String(t.folderId), name: 'پوشه دیگر' }); known.add(String(t.folderId)); } });
-                if (!known.has('__default__') || tasks.some(t => !t.folderId)) out.unshift({ id: '__default__', name: 'بدون پوشه' });
+                tasks.forEach(t => { if (t.folderId && String(t.folderId) !== '__default__' && !known.has(String(t.folderId))) { out.push({ id: String(t.folderId), name: 'پوشه دیگر' }); known.add(String(t.folderId)); } });
+                if (!known.has('__default__')) out.unshift({ id: '__default__', name: 'بدون پوشه' });
                 if (!out.length) out.push({ id: '__default__', name: 'بدون پوشه' });
                 return out;
             })();
