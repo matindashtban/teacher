@@ -4402,6 +4402,15 @@ body.app-dark option{background:#172235;color:#e5e7eb}
                     ),
                     menuId===task.id && h('div',{className:'hw-menu'},
                         h('button',{onClick:()=>editTask(task)},'✏️ ویرایش'),
+                        h('label',{style:{display:'block',padding:'8px 10px',fontSize:12,fontWeight:800}},'📂 انتقال به پوشه',
+                            h('select',{className:'hw-input',style:{marginTop:6,width:'100%',padding:8},value:task.folderId||'__default__',onChange:async e=>{
+                                const target=e.target.value;
+                                if(target===(task.folderId||'__default__')) return;
+                                const result=await save(prev=>({...prev,tasks:(Array.isArray(prev.tasks)?prev.tasks:[]).map(t=>t.id===task.id?{...t,folderId:target}:t)}));
+                                if(result&&result.ok===false) showToast('انتقال تکلیف ذخیره نشد.','error');
+                                else {setMenuId(null);showToast('تکلیف همراه با تمام وضعیت‌ها و اطلاعاتش منتقل شد.');}
+                            }},folderList.map(f=>h('option',{key:f.id,value:f.id},f.name))
+                        )),
                         h('button',{onClick:()=>duplicateTask(task)},'📄 کپی تکلیف'),
                         h('button',{style:{color:'#be123c'},onClick:()=>removeTask(task)},'🗑 حذف')
                     ),
@@ -10153,6 +10162,30 @@ return React.createElement('div', null,
                 if (result && result.ok === false) showToast('تأیید آزمون ذخیره نشد.', 'error');
                 else showToast('آزمون تأیید شد و در پوشه درس باقی ماند.');
             };
+            const moveSelectedExam = async targetSubject => {
+                if (!selectedExam || selectedExam.legacy || !targetSubject || targetSubject === selectedSubject) return;
+                if (!window.confirm('آزمون «' + selectedExam.title + '» همراه با تمام نمره‌ها، توضیحات و تصاویر دانش‌آموزان به پوشه درس «' + targetSubject + '» منتقل شود؟')) return;
+                Object.values(window.__newExamTimers || {}).forEach(clearTimeout); window.__newExamTimers = {};
+                setSaving(true);
+                const result = await save(prev => {
+                    const folders = { ...(prev.examFolders || {}) };
+                    const source = Array.isArray(folders[selectedSubject]) ? [...folders[selectedSubject]] : [];
+                    const item = source.find(x => x.id === selectedExam.id);
+                    if (!item) return prev;
+                    folders[selectedSubject] = source.filter(x => x.id !== selectedExam.id);
+                    folders[targetSubject] = [...(Array.isArray(folders[targetSubject]) ? folders[targetSubject] : []), { ...item, subject: targetSubject }];
+                    const exams = {};
+                    Object.entries(prev.exams || {}).forEach(([studentId, list]) => {
+                        exams[studentId] = (Array.isArray(list) ? list : []).map(record =>
+                            record.examId === selectedExam.id ? { ...record, subject: targetSubject } : record
+                        );
+                    });
+                    return { ...prev, examFolders: folders, exams };
+                });
+                setSaving(false);
+                if (result && result.ok === false) showToast('انتقال آزمون ذخیره نشد؛ اطلاعات قبلی دست‌نخورده باقی ماند.', 'error');
+                else { setSelectedSubject(targetSubject); setView('list'); setSelectedExamId(null); showToast('آزمون و تمام اطلاعات دانش‌آموزان با موفقیت منتقل شد.'); }
+            };
             const deleteExam = async () => {
                 if (!selectedExam || !window.confirm(`آزمون «${selectedExam.title}» و تمام نمره‌ها و پیوست‌های آن حذف شود؟ این کار قابل بازگشت نیست.`)) return;
                 const result = await save(prev => {
@@ -10224,7 +10257,7 @@ return React.createElement('div', null,
                             : React.createElement('div', { style: { textAlign: 'center', padding: '28px 12px', color: '#829391', background: '#f8fbfa', borderRadius: 14 } }, React.createElement('div', { style: { fontSize: 32 } }, '📂'), React.createElement('strong', null, 'هنوز آزمونی در این پوشه نیست'), React.createElement('p', { style: { fontSize: 12, margin: '6px 0 0' } }, 'برای شروع، روی «آزمون جدید» بزنید.'))
                     ),
                     view === 'editor' && selectedExam && React.createElement('div', { style: { marginTop: 14 } },
-                        React.createElement('div', { style: { background: '#f4fbf9', borderRadius: 13, padding: 12, marginBottom: 12, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 } }, React.createElement('div', null, React.createElement('strong', null, selectedExam.title), React.createElement('div', { className: 'text-small text-muted' }, `${selectedSubject} • ${toShamsi(selectedExam.date || date)}`)), React.createElement('span', { className: 'text-small text-muted' }, 'ذخیره خودکار فعال است')),
+                        React.createElement('div', { style: { background: '#f4fbf9', borderRadius: 13, padding: 12, marginBottom: 12, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 } }, React.createElement('div', null, React.createElement('strong', null, selectedExam.title), React.createElement('div', { className: 'text-small text-muted' }, `${selectedSubject} • ${toShamsi(selectedExam.date || date)}`)), React.createElement('div',{style:{display:'flex',alignItems:'center',gap:7,flexWrap:'wrap'}},!selectedExam.legacy&&React.createElement('select',{disabled:saving,defaultValue:'','aria-label':'انتقال آزمون به پوشه درس دیگر',onChange:e=>{const target=e.target.value;if(target)moveSelectedExam(target);e.target.value='';},style:{border:'1px solid #cfe3df',borderRadius:9,padding:'7px 9px',fontFamily:'inherit',maxWidth:170}},React.createElement('option',{value:''},'📂 انتقال به پوشه درس...'),SUBJECTS.filter(subject=>subject!==selectedSubject).map(subject=>React.createElement('option',{key:subject,value:subject},subject))),React.createElement('span', { className: 'text-small text-muted' }, 'ذخیره خودکار فعال است'))),
                         students.length === 0 ? React.createElement('div', { className: 'empty-state' }, 'هنوز دانش‌آموزی ثبت نشده است') : students.map((student, index) => {
                             const draft = drafts[student.id] || { grade: '', description: '', images: [], absent: false };
                             return React.createElement('div', { key: student.id, style: { border: '1px solid #e2ecea', borderRadius: 13, marginBottom: 9, overflow: 'hidden', background: '#fff' } },
