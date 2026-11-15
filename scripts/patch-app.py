@@ -3,6 +3,18 @@ import re
 
 p = Path("www/index.html")
 s = p.read_text(encoding="utf-8")
+# The current uploaded HTML already contains the native PNG bridge, full-backup
+# implementation, and the current teacher-notes UI. Do not run legacy text
+# replacements against this newer source: their old anchors no longer exist.
+if (
+    "async function saveOrSharePngs(files, title)" in s
+    and "const exportBackup = async () => {" in s
+    and "function TeacherNotes(" in s
+):
+    print("Current app source already includes native patches; skipping legacy patcher.")
+    raise SystemExit(0)
+
+
 
 old = """        async function saveOrSharePngs(files, title) {
             try {
