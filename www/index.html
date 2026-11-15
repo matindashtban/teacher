@@ -4878,17 +4878,38 @@ body.app-dark option{background:#172235;color:#e5e7eb}
             return out;
         }
         // یک نقطه‌ی واحد برای ذخیره‌ی PDF: روی اندروید از پل بومی استفاده می‌شود، در مرورگر دانلود می‌شود
-        function deliverPdf(pdf, fileName, studentName) {
-            const android = window.Android;
-            if (android && typeof android.saveStudentReport === 'function' && studentName) {
-                android.saveStudentReport(pdf.output('datauristring'), studentName, fileName);
-                return;
+        async function deliverPdf(pdf, fileName, studentName) {
+            try {
+                const blob = pdf.output('blob');
+                if (!(blob instanceof Blob) || !blob.size) throw new Error('فایل PDF خالی ساخته شد');
+                // Capacitor bridge: فایل را در حافظه موقت بومی می‌نویسد و پنجره
+                // اشتراک‌گذاری اندروید را باز می‌کند تا کاربر بتواند ذخیره کند.
+                if (window.NativeFiles && typeof window.NativeFiles.shareFiles === 'function') {
+                    await window.NativeFiles.shareFiles([{ name: fileName, blob }], 'گزارش دانش‌آموز');
+                    return { ok: true, method: 'native-share' };
+                }
+                // سازگاری با پل‌های قدیمی در APKهای قبلی
+                const android = window.Android;
+                if (android && typeof android.saveStudentReport === 'function' && studentName) {
+                    const result = android.saveStudentReport(await new Promise((resolve,reject)=>{
+                        const reader=new FileReader();reader.onerror=()=>reject(reader.error);reader.onload=()=>resolve(String(reader.result));reader.readAsDataURL(blob);
+                    }), studentName, fileName);
+                    if (result === false) throw new Error('ذخیره‌سازی بومی ناموفق بود');
+                    return { ok: true, method: 'legacy-android' };
+                }
+                if (android && typeof android.saveFile === 'function') {
+                    const dataUrl=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onerror=()=>reject(reader.error);reader.onload=()=>resolve(String(reader.result));reader.readAsDataURL(blob);});
+                    const result=android.saveFile(dataUrl,fileName,'application/pdf');
+                    if (result === false) throw new Error('ذخیره‌سازی بومی ناموفق بود');
+                    return { ok: true, method: 'legacy-android' };
+                }
+                pdf.save(fileName);
+                return { ok: true, method: 'browser-download' };
+            } catch (err) {
+                console.error('PDF delivery failed:', err);
+                try { window.dispatchEvent(new CustomEvent('show-toast',{detail:{message:'ذخیره PDF انجام نشد: '+(err.message||'خطای ناشناخته'),kind:'error'}})); } catch (_) {}
+                throw err;
             }
-            if (android && typeof android.saveFile === 'function') {
-                android.saveFile(pdf.output('datauristring'), fileName, 'application/pdf');
-                return;
-            }
-            pdf.save(fileName);
         }
 
         function attDownload(blob, name) {
@@ -5552,6 +5573,150 @@ body.app-dark option{background:#172235;color:#e5e7eb}
                     h('h4',null,'آخرین سوابق امتیاز'),hist.slice(-10).reverse().map((x,i)=>h('div',{key:i,className:'flex justify-between'},h('span',null,x.reason||x.note||'ثبت امتیاز'),h('b',null,toPersianDigits(x.amount||x.points||0)))),
                     h('button',{className:'btn-primary',onClick:()=>window.print()},'🖨️ چاپ پرونده')));
         }
+
+        // هشدارهای هوشمند کلاس: افت نمره، غیبت و تکالیف عقب‌افتاده
+        function SmartAlerts({data}) {
+            const h=React.createElement, students=data.students||[], tasks=data.tasks||[];
+            const [threshold,setThreshold]=React.useState('12');
+            const att=attStats(data,()=>true);
+            const alerts=[];
+            students.forEach(st=>{
+                const exams=(data.exams&&data.exams[st.id])||[];
+                const valid=exams.filter(x=>x && x.absent!==true && Number.isFinite(Number(x.grade)));
+                const avg=valid.length?valid.reduce((a,x)=>a+Number(x.grade),0)/valid.length:null;
+                const abs=(att[st.id]||{}).a||0;
+                const missed=tasks.filter(t=>t.dueDate && t.dueDate<todayISO() && ['pending','incomplete','missing'].includes((t.statuses||{})[st.id]||'pending'));
+                const missing=tasks.filter(t=>['missing','incomplete'].includes((t.statuses||{})[st.id]||'pending'));
+                const name=st.name||[st.firstName,st.lastName].filter(Boolean).join(' ')||'دانش‌آموز';
+                if(avg!==null && avg<Number(threshold)) alerts.push({id:st.id+'-grade',name,kind:'افت نمره',detail:'میانگین آزمون '+toPersianDigits(avg.toFixed(2)),level:'warn'});
+                if(abs>=3) alerts.push({id:st.id+'-abs',name,kind:'غیبت تکراری',detail:toPersianDigits(abs)+' جلسه غیبت ثبت‌شده',level:'bad'});
+                if(missed.length) alerts.push({id:st.id+'-late',name,kind:'تکلیف با مهلت گذشته',detail:toPersianDigits(missed.length)+' مورد تحویل‌نشده یا ناقص',level:'bad'});
+                else if(missing.length) alerts.push({id:st.id+'-task',name,kind:'تکلیف ناقص/تحویل‌نشده',detail:toPersianDigits(missing.length)+' مورد',level:'warn'});
+            });
+            const palette={bad:{bg:'#fff0f0',border:'#e7a1a1',color:'#a32626'},warn:{bg:'#fff8e8',border:'#e8cf91',color:'#875b00'}};
+            return h('div',{className:'card'},
+                h('h3',null,'🔔 هشدارهای هوشمند کلاس'),
+                h('p',{className:'text-muted text-small'},'هشدارها از داده‌های ثبت‌شده همین کلاس محاسبه می‌شوند؛ چیزی به‌صورت خودکار در سوابق دانش‌آموز تغییر نمی‌کند.'),
+                h('label',null,'حد هشدار میانگین آزمون (از ۲۰)'),
+                h('input',{type:'number',min:0,max:20,step:.5,value:threshold,onChange:e=>setThreshold(e.target.value),style:{maxWidth:110,display:'block',margin:'6px 0 14px'}}),
+                alerts.length?h('div',{className:'grid gap-8'},alerts.map(a=>h('div',{key:a.id,style:{padding:12,borderRadius:12,border:'1px solid '+palette[a.level].border,background:palette[a.level].bg,color:palette[a.level].color}},
+                    h('div',{className:'flex justify-between',style:{gap:8,flexWrap:'wrap'}},h('b',null,a.name),h('b',null,a.kind)),
+                    h('div',{className:'text-small',style:{marginTop:4}},a.detail)
+                ))):h('div',{style:{padding:18,textAlign:'center',background:'#edf8f1',borderRadius:12,color:'#176b43'}},'✅ در حال حاضر هشداری بر اساس اطلاعات ثبت‌شده پیدا نشد.')
+            );
+        }
+
+        // مقایسه عملکرد دو بازه انتخابی بر اساس آزمون، حضور و غیاب و وضعیت تکالیف
+        function PeriodComparison({data}) {
+            const h=React.createElement, students=data.students||[];
+            const [fromA,setFromA]=React.useState(()=>{const d=new Date();d.setDate(d.getDate()-60);return d.toISOString().slice(0,10);});
+            const [toA,setToA]=React.useState(()=>{const d=new Date();d.setDate(d.getDate()-31);return d.toISOString().slice(0,10);});
+            const [fromB,setFromB]=React.useState(()=>{const d=new Date();d.setDate(d.getDate()-30);return d.toISOString().slice(0,10);});
+            const [toB,setToB]=React.useState(todayISO());
+            const [studentId,setStudentId]=React.useState('all');
+            const calc=(from,to)=>{
+                const scope=d=>d>=from&&d<=to;
+                const ids=studentId==='all'?students.map(s=>String(s.id)):[String(studentId)];
+                let grades=[],present=0,absent=0,late=0,done=0,notDone=0,taskCount=0;
+                ids.forEach(id=>{
+                    ((data.exams||{})[id]||[]).forEach(e=>{if(e.date&&scope(e.date)&&e.absent!==true&&Number.isFinite(Number(e.grade)))grades.push(Number(e.grade));});
+                    const a=attStats(data,d=>scope(d))[id]||{};present+=a.p||0;absent+=a.a||0;late+=a.l||0;
+                });
+                (data.tasks||[]).filter(t=>scope(t.assignedDate||t.dueDate||'')).forEach(t=>{
+                    ids.forEach(id=>{taskCount++;const st=(t.statuses||{})[id]||'pending';if(st==='done')done++;else notDone++;});
+                });
+                return {avg:grades.length?grades.reduce((a,b)=>a+b,0)/grades.length:null,examCount:grades.length,present,absent,late,done,notDone,taskCount,completion:taskCount?done/taskCount*100:null};
+            };
+            const A=calc(fromA,toA),B=calc(fromB,toB);
+            const fmt=v=>v===null?'—':toPersianDigits(v.toFixed(2));
+            const rows=[['میانگین نمرات آزمون',fmt(A.avg),fmt(B.avg)],['تعداد آزمون‌های دارای نمره',toPersianDigits(A.examCount),toPersianDigits(B.examCount)],['حضور ثبت‌شده',toPersianDigits(A.present),toPersianDigits(B.present)],['غیبت',toPersianDigits(A.absent),toPersianDigits(B.absent)],['تأخیر',toPersianDigits(A.late),toPersianDigits(B.late)],['تکالیف تحویل‌شده',toPersianDigits(A.done),toPersianDigits(B.done)],['تکالیف انجام‌نشده/ناقص',toPersianDigits(A.notDone),toPersianDigits(B.notDone)],['درصد تحویل تکالیف',A.completion===null?'—':toPersianDigits(A.completion.toFixed(1))+'٪',B.completion===null?'—':toPersianDigits(B.completion.toFixed(1))+'٪']];
+            return h('div',{className:'card'},
+                h('h3',null,'📊 مقایسه عملکرد در دو بازه زمانی'),
+                h('div',{className:'card',style:{padding:12}},
+                    h('label',null,'دانش‌آموز / کل کلاس'),
+                    h('select',{value:studentId,onChange:e=>setStudentId(e.target.value),style:{width:'100%',marginBottom:12}},[h('option',{key:'all',value:'all'},'کل کلاس'),...students.map(s=>h('option',{key:s.id,value:String(s.id)},s.name||[s.firstName,s.lastName].filter(Boolean).join(' ')))]),
+                    h('div',{className:'grid grid-2 gap-8'},
+                        h('div',null,h('b',null,'بازه اول'),h('label',null,'از'),h('input',{type:'date',value:fromA,onChange:e=>setFromA(e.target.value),style:{width:'100%'}}),h('label',null,'تا'),h('input',{type:'date',value:toA,onChange:e=>setToA(e.target.value),style:{width:'100%'}})),
+                        h('div',null,h('b',null,'بازه دوم'),h('label',null,'از'),h('input',{type:'date',value:fromB,onChange:e=>setFromB(e.target.value),style:{width:'100%'}}),h('label',null,'تا'),h('input',{type:'date',value:toB,onChange:e=>setToB(e.target.value),style:{width:'100%'}}))
+                    )
+                ),
+                (fromA>toA||fromB>toB)?h('p',{style:{color:'#b3261e'}},'تاریخ شروع هر بازه باید قبل از تاریخ پایان آن باشد.'):null,
+                h('div',{className:'table-wrap'},h('table',{className:'w-full'},h('thead',null,h('tr',null,['شاخص','بازه اول','بازه دوم'].map(x=>h('th',{key:x},x)))),h('tbody',null,rows.map(r=>h('tr',{key:r[0]},r.map((v,i)=>h('td',{key:i},v))))))),
+                h('p',{className:'text-muted text-small'},'مقایسه فقط بر اساس آزمون‌ها، حضور و غیاب نهایی و تکالیفی است که تاریخ تخصیص آن‌ها در بازه انتخابی قرار دارد.')
+            );
+        }
+
+        // بانک سؤال و آزمون‌ساز دستی؛ هیچ سؤال یا ترتیب تصادفی تولید نمی‌شود.
+        function QuestionBank({data,save,showToast}) {
+            const h=React.createElement, bank=Array.isArray(data.questionBank)?data.questionBank:[], papers=Array.isArray(data.questionPapers)?data.questionPapers:[];
+            const [form,setForm]=React.useState({subject:'',topic:'',text:'',kind:'short',options:'',answer:'',score:'1'});
+            const [editing,setEditing]=React.useState(null),[query,setQuery]=React.useState(''),[subjectFilter,setSubjectFilter]=React.useState('all');
+            const [selected,setSelected]=React.useState([]),[paperTitle,setPaperTitle]=React.useState(''),[activePaper,setActivePaper]=React.useState(null);
+            const field=(key,value)=>setForm(p=>({...p,[key]:value}));
+            const clear=()=>{setForm({subject:'',topic:'',text:'',kind:'short',options:'',answer:'',score:'1'});setEditing(null);};
+            const persistQuestion=async()=>{
+                if(!form.subject.trim()||!form.text.trim())return showToast('درس و متن سؤال را وارد کنید.','error');
+                const q={id:editing||uid(),subject:form.subject.trim(),topic:form.topic.trim(),text:form.text.trim(),kind:form.kind,options:form.kind==='choice'?form.options.split('\n').map(x=>x.trim()).filter(Boolean):[],answer:form.answer.trim(),score:Math.max(.25,Number(form.score)||1),updatedAt:new Date().toISOString()};
+                const next=editing?bank.map(x=>x.id===editing?q:x):[q,...bank];
+                const result=await save(prev=>({...prev,questionBank:next}));
+                if(result&&result.ok===false)return showToast('ذخیره سؤال ناموفق بود.','error');
+                clear();showToast(editing?'سؤال ویرایش شد.':'سؤال به بانک اضافه شد.');
+            };
+            const edit=q=>{setEditing(q.id);setForm({subject:q.subject||'',topic:q.topic||'',text:q.text||'',kind:q.kind||'short',options:(q.options||[]).join('\n'),answer:q.answer||'',score:String(q.score||1)});window.scrollTo({top:0,behavior:'smooth'});};
+            const remove=async q=>{if(!confirm('این سؤال حذف شود؟'))return;const result=await save(prev=>({...prev,questionBank:(prev.questionBank||[]).filter(x=>x.id!==q.id)}));if(result&&result.ok===false)return showToast('حذف سؤال ذخیره نشد.','error');setSelected(v=>v.filter(id=>id!==q.id));showToast('سؤال حذف شد.');};
+            const filtered=bank.filter(q=>(subjectFilter==='all'||q.subject===subjectFilter)&&((q.text+' '+q.subject+' '+(q.topic||'')).toLocaleLowerCase('fa').includes(query.toLocaleLowerCase('fa'))));
+            const makePaper=async()=>{
+                const chosen=bank.filter(q=>selected.includes(q.id));
+                if(!chosen.length)return showToast('ابتدا سؤال‌ها را به‌صورت دستی انتخاب کنید.','error');
+                if(!paperTitle.trim())return showToast('عنوان برگه آزمون را وارد کنید.','error');
+                const paper={id:uid(),title:paperTitle.trim(),createdAt:new Date().toISOString(),questions:chosen.map(q=>({...q}))};
+                const result=await save(prev=>({...prev,questionPapers:[paper,...(Array.isArray(prev.questionPapers)?prev.questionPapers:[])]}));
+                if(result&&result.ok===false)return showToast('ذخیره برگه آزمون ناموفق بود.','error');
+                setActivePaper(paper);setPaperTitle('');setSelected([]);showToast('برگه آزمون از سؤال‌های انتخابی ساخته و ذخیره شد.');
+            };
+            const subjects=[...new Set(bank.map(q=>q.subject).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fa'));
+            const printPaper=paper=>{
+                const win=window.open('','_blank');if(!win)return showToast('مرورگر اجازه بازکردن پنجره چاپ را نداد.','error');
+                const esc=x=>String(x||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+                win.document.write('<!doctype html><html lang="fa" dir="rtl"><meta charset="utf-8"><title>'+esc(paper.title)+'</title><style>body{font-family:Tahoma,Arial;padding:28px;line-height:2}li{margin:16px 0}.opt{margin-right:20px}</style><h2>'+esc(paper.title)+'</h2><ol>'+paper.questions.map(q=>'<li><b>'+esc(q.text)+'</b> ('+esc(q.score)+' نمره)'+(q.options||[]).map(o=>'<div class="opt">□ '+esc(o)+'</div>').join('')+'</li>').join('')+'</ol></html>');
+                win.document.close();win.focus();setTimeout(()=>win.print(),300);
+            };
+            return h('div',null,
+                h('div',{className:'card'},h('h3',null,'📚 بانک سؤال و آزمون‌ساز دستی'),
+                    h('p',{className:'text-muted text-small'},'سؤال‌ها را خودتان ثبت و انتخاب می‌کنید. ترتیب و محتوای آزمون کاملاً دستی است و هیچ قابلیت تولید تصادفی وجود ندارد.'),
+                    h('h4',null,editing?'ویرایش سؤال':'افزودن سؤال جدید'),
+                    h('div',{className:'grid grid-2 gap-8'},
+                        h('input',{value:form.subject,onChange:e=>field('subject',e.target.value),placeholder:'نام درس'}),
+                        h('input',{value:form.topic,onChange:e=>field('topic',e.target.value),placeholder:'مبحث / فصل (اختیاری)'}),
+                        h('select',{value:form.kind,onChange:e=>field('kind',e.target.value)},h('option',{value:'short'},'تشریحی / پاسخ کوتاه'),h('option',{value:'choice'},'چندگزینه‌ای')),
+                        h('input',{type:'number',min:.25,step:.25,value:form.score,onChange:e=>field('score',e.target.value),placeholder:'نمره سؤال'})
+                    ),
+                    h('textarea',{rows:3,value:form.text,onChange:e=>field('text',e.target.value),placeholder:'متن سؤال',style:{width:'100%',marginTop:8}}),
+                    form.kind==='choice'?h('textarea',{rows:4,value:form.options,onChange:e=>field('options',e.target.value),placeholder:'گزینه‌ها؛ هر گزینه در یک خط',style:{width:'100%',marginTop:8}}):null,
+                    h('input',{value:form.answer,onChange:e=>field('answer',e.target.value),placeholder:'پاسخ / کلید تصحیح (اختیاری)',style:{width:'100%',marginTop:8}}),
+                    h('div',{className:'flex gap-8',style:{marginTop:10}},h('button',{className:'btn-primary',onClick:persistQuestion},editing?'ذخیره ویرایش':'＋ افزودن به بانک'),editing?h('button',{className:'btn-ghost',onClick:clear},'انصراف'):null)
+                ),
+                h('div',{className:'card'},h('h3',null,'ساخت آزمون با انتخاب دستی سؤال‌ها'),
+                    h('input',{value:paperTitle,onChange:e=>setPaperTitle(e.target.value),placeholder:'عنوان برگه آزمون',style:{width:'100%',marginBottom:8}}),
+                    h('div',{className:'text-small text-muted'},toPersianDigits(selected.length)+' سؤال انتخاب شده'),
+                    h('button',{className:'btn-primary w-full',onClick:makePaper,disabled:!selected.length},'ساخت و ذخیره برگه از سؤال‌های انتخابی')
+                ),
+                h('div',{className:'card'},h('div',{className:'flex flex-wrap gap-8'},h('h3',null,'سؤال‌های بانک'),h('span',{className:'text-muted'},toPersianDigits(bank.length)+' سؤال')),
+                    h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:'جستجو در متن، درس یا مبحث...',style:{width:'100%',marginBottom:8}}),
+                    h('select',{value:subjectFilter,onChange:e=>setSubjectFilter(e.target.value),style:{width:'100%',marginBottom:10}},h('option',{value:'all'},'همه درس‌ها'),subjects.map(x=>h('option',{key:x,value:x},x))),
+                    filtered.map(q=>h('div',{key:q.id,style:{border:'1px solid #ddd',borderRadius:10,padding:10,marginBottom:8}},
+                        h('div',{className:'flex gap-8',style:{alignItems:'flex-start'}},h('input',{type:'checkbox',checked:selected.includes(q.id),onChange:e=>setSelected(v=>e.target.checked?[...v,q.id]:v.filter(x=>x!==q.id))}),h('div',{style:{flex:1}},h('b',null,q.subject+' · '+(q.topic||'بدون مبحث')),h('div',null,q.text),h('div',{className:'text-small text-muted'},(q.kind==='choice'?'چندگزینه‌ای':'تشریحی')+' · '+toPersianDigits(q.score||1)+' نمره'),(q.options||[]).map((o,i)=>h('div',{key:i,className:'text-small'},toPersianDigits(i+1)+') '+o))),h('button',{className:'btn-ghost',onClick:()=>edit(q)},'ویرایش'),h('button',{className:'btn-ghost',onClick:()=>remove(q)},'حذف'))
+                    )),
+                    !filtered.length?h('p',{className:'text-muted'},'سؤالی با این مشخصات پیدا نشد.'):null
+                ),
+                h('div',{className:'card'},h('h3',null,'برگه‌های آزمون ذخیره‌شده'),
+                    papers.map(p=>h('div',{key:p.id,className:'flex justify-between gap-8',style:{padding:8,borderBottom:'1px solid #eee',flexWrap:'wrap'}},h('div',null,h('b',null,p.title),h('div',{className:'text-small text-muted'},toPersianDigits((p.questions||[]).length)+' سؤال · '+(p.createdAt?new Date(p.createdAt).toLocaleDateString('fa-IR'):'—'))),h('button',{className:'btn-secondary',onClick:()=>printPaper(p)},'چاپ / PDF'),h('button',{className:'btn-ghost',onClick:()=>setActivePaper(p)},'نمایش'))),
+                    activePaper?h('div',{className:'card'},h('h4',null,activePaper.title),(activePaper.questions||[]).map((q,i)=>h('div',{key:q.id||i,style:{marginBottom:10}},h('b',null,toPersianDigits(i+1)+'. '+q.text),...(q.options||[]).map((o,j)=>h('div',{key:j},'□ '+o))))):null,
+                    !papers.length?h('p',{className:'text-muted'},'هنوز برگه آزمونی ساخته نشده است.'):null
+                )
+            );
+        }
+
         function pinCryptoOk() { return !!(window.crypto && window.crypto.subtle && window.TextEncoder); }
         function newPinSalt() {
             const b = new Uint8Array(12);
@@ -6052,6 +6217,9 @@ body.app-dark option{background:#172235;color:#e5e7eb}
                 { key: 'tasks', label: '📚 تکالیف و موارد تحویلی' },
                 { key: 'performance', label: '📝 سطوح عملکرد' },
                 { key: 'classInsights', label: '📈 تحلیل و رتبه‌بندی' },
+                { key: 'smartAlerts', label: '🔔 هشدار هوشمند' },
+                { key: 'periodCompare', label: '📊 مقایسه بازه‌ها' },
+                { key: 'questionBank', label: '📚 بانک سؤال' },
                 { key: 'dossier', label: '🗂️ پرونده دانش‌آموز' },
                 { key: 'parentMeetings', label: '👨‍👩‍👧 جلسات اولیا' },
                 { key: 'teacherNotes', label: '🗒️ دفترچه یادداشت معلم' },
@@ -6213,6 +6381,9 @@ body.app-dark option{background:#172235;color:#e5e7eb}
                 tab === 'tasks' && React.createElement(HomeworkTasks, { data, save, showToast }),
                 tab === 'performance' && React.createElement(PerformanceLevels, { data, save, showToast }),
                 tab === 'classInsights' && React.createElement(ClassInsights, { data }),
+                tab === 'smartAlerts' && React.createElement(SmartAlerts, { data }),
+                tab === 'periodCompare' && React.createElement(PeriodComparison, { data }),
+                tab === 'questionBank' && React.createElement(QuestionBank, { data, save, showToast }),
                 tab === 'dossier' && React.createElement(StudentDossier, { data }),
                 tab === 'parentMeetings' && React.createElement(ParentMeetings, { data, save, showToast }),
                 tab === 'teacherNotes' && React.createElement(TeacherNotes, { data, save, showToast }),
