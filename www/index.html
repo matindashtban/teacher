@@ -2011,6 +2011,18 @@ body.app-dark .modal,body.app-dark [role="dialog"]{color:#e5e7eb}
 body.app-dark .header-logo{filter:brightness(.9)}
 body.app-dark hr{border-color:#334155}
 body.app-dark option{background:#172235;color:#e5e7eb}
+
+        .nav-drawer-trigger{display:flex;align-items:center;gap:12px;margin:0 0 14px;direction:rtl}
+        .nav-current-label{font-size:13px;color:var(--text-secondary,#52606d);font-weight:700}
+        .nav-drawer-backdrop{position:fixed;inset:0;background:rgba(10,20,35,.42);z-index:4998}
+        .nav-drawer{position:fixed;top:0;right:0;bottom:0;width:min(320px,86vw);padding:16px 12px 24px;background:#f8fbff;color:#17212b;z-index:4999;box-shadow:-12px 0 40px rgba(0,0,0,.2);transform:translateX(110%);transition:transform .25s ease;overflow-y:auto;direction:rtl}
+        .nav-drawer.open{transform:translateX(0)}
+        .nav-drawer-head{display:flex;align-items:center;justify-content:space-between;padding:8px 6px 14px;border-bottom:1px solid #dce5eb;margin-bottom:10px}
+        .nav-drawer-item{display:block;width:100%;text-align:right;margin:4px 0;padding:12px 13px;border:1px solid transparent;border-radius:12px;background:transparent;color:#263746;font-weight:700;font-size:14px}
+        .nav-drawer-item.active{background:#dff7f3;border-color:#76cfc4;color:#08796e}
+        .nav-drawer-item:focus-visible,.nav-drawer-trigger button:focus-visible{outline:3px solid #f0b44c;outline-offset:2px}
+        @media(min-width:1000px){.nav-drawer{width:340px}}
+        @media print{.nav-drawer,.nav-drawer-backdrop,.nav-drawer-trigger{display:none!important}}
 </style>
 
 </head>
@@ -5335,7 +5347,7 @@ body.app-dark option{background:#172235;color:#e5e7eb}
         }
 
         // ===== داده‌ی هر تب برای لیست والدین =====
-        function buildRosterRequest(tab, data, selectedExamKeys, selectedTaskIds) {
+        function buildRosterRequest(tab, data, selectedExamKeys, selectedTaskIds, taskStatusFilter) {
             const students = (Array.isArray(data.students) ? data.students : []);
             const row = (s, cells) => ({ name: attNameOf(s), photo: s.photo || '', cells });
             const today = todayISO();
@@ -5344,6 +5356,9 @@ body.app-dark option{background:#172235;color:#e5e7eb}
                 const allTasks = Array.isArray(data.tasks) ? data.tasks : [];
                 const dayTasks = allTasks.filter(t => selected.has(String(t.id)));
                 if (!dayTasks.length || !students.length) return null;
+                const statusGroups = taskStatusFilter === 'done' ? ['done'] : taskStatusFilter === 'incomplete' ? ['incomplete'] : taskStatusFilter === 'both' ? ['done','incomplete'] : null;
+                const reportStudents = statusGroups ? students.filter(s => dayTasks.some(t => statusGroups.includes((t.statuses || {})[s.id] || 'pending'))) : students;
+                if (!reportStudents.length) return null;
                 const dates = dayTasks.map(t => t.assignedDate).filter(Boolean).sort();
                 const day = dates.length ? dates[dates.length - 1] : today;
                 const TS = { done: { t: '✓ تحویل داد', ...BADGE.good }, incomplete: { t: '½ ناقص', ...BADGE.warn }, missing: { t: '✕ انجام نداد', ...BADGE.bad }, pending: { t: 'بررسی نشده', ...BADGE.none } };
@@ -5352,7 +5367,7 @@ body.app-dark option{background:#172235;color:#e5e7eb}
                     const part = dayTasks.slice(i, i + 3);
                     out.push({ title: 'وضعیت تکالیف', date: toShamsi(day), filename: 'تکالیف-' + day + '.png',
                         columns: part.map(t => ({ title: t.title || 'تکلیف', w: 1 })),
-                        rows: students.map(s => row(s, part.map(t => TS[(t.statuses || {})[s.id]] || TS.pending))) });
+                        rows: reportStudents.map(s => row(s, part.map(t => TS[(t.statuses || {})[s.id]] || TS.pending))) });
                 }
                 return out;
             }
@@ -5656,73 +5671,58 @@ body.app-dark option{background:#172235;color:#e5e7eb}
         }
 
         // بانک سؤال و آزمون‌ساز دستی؛ هیچ سؤال یا ترتیب تصادفی تولید نمی‌شود.
-        function QuestionBank({data,save,showToast}) {
+        function QuestionBank({data,save,showToast,meta={},className=''}) {
             const h=React.createElement, bank=Array.isArray(data.questionBank)?data.questionBank:[], papers=Array.isArray(data.questionPapers)?data.questionPapers:[];
-            const [form,setForm]=React.useState({subject:'',topic:'',text:'',kind:'short',options:'',answer:'',score:'1'});
+            const folders=Array.isArray(data.questionFolders)?data.questionFolders:[];
+            const [form,setForm]=React.useState({subject:'',topic:'',text:'',kind:'short',options:'',answer:'',score:'1',image:''});
             const [editing,setEditing]=React.useState(null),[query,setQuery]=React.useState(''),[subjectFilter,setSubjectFilter]=React.useState('all');
             const [selected,setSelected]=React.useState([]),[paperTitle,setPaperTitle]=React.useState(''),[activePaper,setActivePaper]=React.useState(null);
+            const [activeFolder,setActiveFolder]=React.useState('all'),[folderName,setFolderName]=React.useState('');
             const field=(key,value)=>setForm(p=>({...p,[key]:value}));
-            const clear=()=>{setForm({subject:'',topic:'',text:'',kind:'short',options:'',answer:'',score:'1'});setEditing(null);};
+            const clear=()=>{setForm({subject:'',topic:'',text:'',kind:'short',options:'',answer:'',score:'1',image:''});setEditing(null);};
+            const compressQuestionImage=file=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onerror=reject;reader.onload=()=>{const img=new Image();img.onerror=reject;img.onload=()=>{const max=1400,scale=Math.min(1,max/Math.max(img.width,img.height)),canvas=document.createElement('canvas');canvas.width=Math.round(img.width*scale);canvas.height=Math.round(img.height*scale);canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);resolve(canvas.toDataURL('image/jpeg',.82));};img.src=reader.result;};reader.readAsDataURL(file);});
             const persistQuestion=async()=>{
                 if(!form.subject.trim()||!form.text.trim())return showToast('درس و متن سؤال را وارد کنید.','error');
-                const q={id:editing||uid(),subject:form.subject.trim(),topic:form.topic.trim(),text:form.text.trim(),kind:form.kind,options:form.kind==='choice'?form.options.split('\n').map(x=>x.trim()).filter(Boolean):[],answer:form.answer.trim(),score:Math.max(.25,Number(form.score)||1),updatedAt:new Date().toISOString()};
+                const old=bank.find(x=>x.id===editing);
+                const q={...(old||{}),id:editing||uid(),subject:form.subject.trim(),topic:form.topic.trim(),text:form.text.trim(),kind:form.kind,options:form.kind==='choice'?form.options.split('\n').map(x=>x.trim()).filter(Boolean):[],answer:form.answer.trim(),score:Math.max(.25,Number(form.score)||1),image:form.image||'',folderId:old?.folderId||activeFolder!=='all'? (old?.folderId||activeFolder):'',updatedAt:new Date().toISOString()};
                 const next=editing?bank.map(x=>x.id===editing?q:x):[q,...bank];
                 const result=await save(prev=>({...prev,questionBank:next}));
                 if(result&&result.ok===false)return showToast('ذخیره سؤال ناموفق بود.','error');
                 clear();showToast(editing?'سؤال ویرایش شد.':'سؤال به بانک اضافه شد.');
             };
-            const edit=q=>{setEditing(q.id);setForm({subject:q.subject||'',topic:q.topic||'',text:q.text||'',kind:q.kind||'short',options:(q.options||[]).join('\n'),answer:q.answer||'',score:String(q.score||1)});window.scrollTo({top:0,behavior:'smooth'});};
+            const edit=q=>{setEditing(q.id);setForm({subject:q.subject||'',topic:q.topic||'',text:q.text||'',kind:q.kind||'short',options:(q.options||[]).join('\n'),answer:q.answer||'',score:String(q.score||1),image:q.image||''});window.scrollTo({top:0,behavior:'smooth'});};
             const remove=async q=>{if(!confirm('این سؤال حذف شود؟'))return;const result=await save(prev=>({...prev,questionBank:(prev.questionBank||[]).filter(x=>x.id!==q.id)}));if(result&&result.ok===false)return showToast('حذف سؤال ذخیره نشد.','error');setSelected(v=>v.filter(id=>id!==q.id));showToast('سؤال حذف شد.');};
-            const filtered=bank.filter(q=>(subjectFilter==='all'||q.subject===subjectFilter)&&((q.text+' '+q.subject+' '+(q.topic||'')).toLocaleLowerCase('fa').includes(query.toLocaleLowerCase('fa'))));
+            const filtered=bank.filter(q=>(activeFolder==='all'||(q.folderId||'')===activeFolder)&&(subjectFilter==='all'||q.subject===subjectFilter)&&((q.text+' '+q.subject+' '+(q.topic||'')).toLocaleLowerCase('fa').includes(query.toLocaleLowerCase('fa'))));
+            const addFolder=async()=>{const name=folderName.trim();if(!name)return;const f={id:uid(),name};const result=await save(prev=>({...prev,questionFolders:[...(prev.questionFolders||[]),f]}));if(result&&result.ok===false)return showToast('ساخت پوشه ناموفق بود.','error');setFolderName('');setActiveFolder(f.id);showToast('پوشه ساخته شد.');};
+            const moveQuestion=async(q,folderId)=>{const result=await save(prev=>({...prev,questionBank:(prev.questionBank||[]).map(x=>x.id===q.id?{...x,folderId}:x)}));if(result&&result.ok===false)showToast('انتقال سؤال انجام نشد.','error');};
+            const deleteFolder=async f=>{if(!confirm('پوشه حذف شود؟ سؤال‌های داخل آن به «بدون پوشه» منتقل می‌شوند.'))return;const result=await save(prev=>({...prev,questionFolders:(prev.questionFolders||[]).filter(x=>x.id!==f.id),questionBank:(prev.questionBank||[]).map(q=>q.folderId===f.id?{...q,folderId:''}:q)}));if(result&&result.ok===false)return showToast('حذف پوشه انجام نشد.','error');setActiveFolder('all');};
             const makePaper=async()=>{
-                const chosen=bank.filter(q=>selected.includes(q.id));
-                if(!chosen.length)return showToast('ابتدا سؤال‌ها را به‌صورت دستی انتخاب کنید.','error');
-                if(!paperTitle.trim())return showToast('عنوان برگه آزمون را وارد کنید.','error');
-                const paper={id:uid(),title:paperTitle.trim(),createdAt:new Date().toISOString(),questions:chosen.map(q=>({...q}))};
-                const result=await save(prev=>({...prev,questionPapers:[paper,...(Array.isArray(prev.questionPapers)?prev.questionPapers:[])]}));
-                if(result&&result.ok===false)return showToast('ذخیره برگه آزمون ناموفق بود.','error');
-                setActivePaper(paper);setPaperTitle('');setSelected([]);showToast('برگه آزمون از سؤال‌های انتخابی ساخته و ذخیره شد.');
+                const chosen=bank.filter(q=>selected.includes(q.id));if(!chosen.length)return showToast('ابتدا سؤال‌ها را به‌صورت دستی انتخاب کنید.','error');if(!paperTitle.trim())return showToast('عنوان برگه آزمون را وارد کنید.','error');
+                const paper={id:uid(),title:paperTitle.trim(),createdAt:new Date().toISOString(),folderId:activeFolder==='all'?'':activeFolder,questions:chosen.map(q=>({...q}))};
+                const result=await save(prev=>({...prev,questionPapers:[paper,...(Array.isArray(prev.questionPapers)?prev.questionPapers:[])]}));if(result&&result.ok===false)return showToast('ذخیره برگه آزمون ناموفق بود.','error');setActivePaper(paper);setPaperTitle('');setSelected([]);showToast('برگه آزمون از سؤال‌های انتخابی ساخته و ذخیره شد.');
             };
-            const subjects=[...new Set(bank.map(q=>q.subject).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fa'));
             const printPaper=paper=>{
                 const win=window.open('','_blank');if(!win)return showToast('مرورگر اجازه بازکردن پنجره چاپ را نداد.','error');
-                const esc=x=>String(x||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-                win.document.write('<!doctype html><html lang="fa" dir="rtl"><meta charset="utf-8"><title>'+esc(paper.title)+'</title><style>body{font-family:Tahoma,Arial;padding:28px;line-height:2}li{margin:16px 0}.opt{margin-right:20px}</style><h2>'+esc(paper.title)+'</h2><ol>'+paper.questions.map(q=>'<li><b>'+esc(q.text)+'</b> ('+esc(q.score)+' نمره)'+(q.options||[]).map(o=>'<div class="opt">□ '+esc(o)+'</div>').join('')+'</li>').join('')+'</ol></html>');
-                win.document.close();win.focus();setTimeout(()=>win.print(),300);
+                const esc=x=>String(x||'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));
+                const school=esc(meta.schoolName||''),teacher=esc(meta.teacherName||''),cls=esc(className||'');
+                const questions=(paper.questions||[]).map((q,i)=>'<section class="question"><div class="qtext"><b>'+toPersianDigits(i+1)+'. '+esc(q.text)+'</b><span class="score">'+toPersianDigits(q.score||1)+' نمره</span></div>'+(q.image?'<img class="qimage" src="'+q.image+'">':'')+(q.options||[]).map((o,j)=>'<div class="option">□ '+toPersianDigits(j+1)+') '+esc(o)+'</div>').join('')+'<div class="answer-space"></div></section>').join('');
+                win.document.write('<!doctype html><html lang="fa" dir="rtl"><meta charset="utf-8"><title>'+esc(paper.title)+'</title><style>@page{size:A4;margin:13mm}*{box-sizing:border-box}body{font-family:Tahoma,Arial,sans-serif;line-height:1.9;color:#17212b;margin:0}.sheet{border:2px solid #263746;min-height:270mm;padding:12mm;position:relative}.exam-head{border:1.5px solid #263746;border-radius:8px;padding:10px 14px;margin-bottom:14px}.school{text-align:center;font-weight:bold;font-size:17px}.paper-title{text-align:center;font-size:18px;font-weight:bold;margin:4px 0 8px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:12px}.student{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px;border-top:1px dashed #777;padding-top:6px}.question{border:1px solid #87939d;border-radius:7px;padding:10px 12px;margin:10px 0;break-inside:avoid}.qtext{display:flex;justify-content:space-between;gap:12px}.score{white-space:nowrap;font-size:11px}.option{margin:3px 22px}.qimage{display:block;max-width:75%;max-height:190px;object-fit:contain;margin:8px auto}.answer-space{height:14px}.footer{text-align:left;font-size:10px;margin-top:10px;color:#555}@media print{.sheet{min-height:270mm}}</style><div class="sheet"><header class="exam-head"><div class="school">'+(school||'نام مدرسه')+'</div><div class="paper-title">'+esc(paper.title)+'</div><div class="meta"><div>نام آموزگار: '+(teacher||'....................')+'</div><div>کلاس: '+(cls||'....................')+'</div><div>درس: '+esc((paper.questions||[])[0]?.subject||'')+'</div><div>تاریخ: ................................</div></div><div class="student"><div>نام و نام خانوادگی دانش‌آموز: ........................................</div><div>نمره: ............... از '+toPersianDigits((paper.questions||[]).reduce((a,q)=>a+Number(q.score||1),0))+'</div></div></header>'+questions+'<div class="footer">موفق باشید</div></div></html>');
+                win.document.close();win.focus();setTimeout(()=>win.print(),500);
             };
             return h('div',null,
-                h('div',{className:'card'},h('h3',null,'📚 بانک سؤال و آزمون‌ساز دستی'),
-                    h('p',{className:'text-muted text-small'},'سؤال‌ها را خودتان ثبت و انتخاب می‌کنید. ترتیب و محتوای آزمون کاملاً دستی است و هیچ قابلیت تولید تصادفی وجود ندارد.'),
+                h('div',{className:'card'},h('h3',null,'📚 بانک سؤال و آزمون‌ساز دستی'),h('p',{className:'text-muted text-small'},'سؤال‌ها را خودتان ثبت و انتخاب می‌کنید. ترتیب و محتوای آزمون کاملاً دستی است و هیچ قابلیت تولید تصادفی وجود ندارد.'),
                     h('h4',null,editing?'ویرایش سؤال':'افزودن سؤال جدید'),
-                    h('div',{className:'grid grid-2 gap-8'},
-                        h('input',{value:form.subject,onChange:e=>field('subject',e.target.value),placeholder:'نام درس'}),
-                        h('input',{value:form.topic,onChange:e=>field('topic',e.target.value),placeholder:'مبحث / فصل (اختیاری)'}),
-                        h('select',{value:form.kind,onChange:e=>field('kind',e.target.value)},h('option',{value:'short'},'تشریحی / پاسخ کوتاه'),h('option',{value:'choice'},'چندگزینه‌ای')),
-                        h('input',{type:'number',min:.25,step:.25,value:form.score,onChange:e=>field('score',e.target.value),placeholder:'نمره سؤال'})
-                    ),
+                    h('div',{className:'grid grid-2 gap-8'},h('input',{value:form.subject,onChange:e=>field('subject',e.target.value),placeholder:'نام درس'}),h('input',{value:form.topic,onChange:e=>field('topic',e.target.value),placeholder:'مبحث / فصل (اختیاری)'}),h('select',{value:form.kind,onChange:e=>field('kind',e.target.value)},h('option',{value:'short'},'تشریحی / پاسخ کوتاه'),h('option',{value:'choice'},'چندگزینه‌ای')),h('input',{type:'number',min:.25,step:.25,value:form.score,onChange:e=>field('score',e.target.value),placeholder:'نمره سؤال'})),
                     h('textarea',{rows:3,value:form.text,onChange:e=>field('text',e.target.value),placeholder:'متن سؤال',style:{width:'100%',marginTop:8}}),
                     form.kind==='choice'?h('textarea',{rows:4,value:form.options,onChange:e=>field('options',e.target.value),placeholder:'گزینه‌ها؛ هر گزینه در یک خط',style:{width:'100%',marginTop:8}}):null,
                     h('input',{value:form.answer,onChange:e=>field('answer',e.target.value),placeholder:'پاسخ / کلید تصحیح (اختیاری)',style:{width:'100%',marginTop:8}}),
-                    h('div',{className:'flex gap-8',style:{marginTop:10}},h('button',{className:'btn-primary',onClick:persistQuestion},editing?'ذخیره ویرایش':'＋ افزودن به بانک'),editing?h('button',{className:'btn-ghost',onClick:clear},'انصراف'):null)
-                ),
-                h('div',{className:'card'},h('h3',null,'ساخت آزمون با انتخاب دستی سؤال‌ها'),
-                    h('input',{value:paperTitle,onChange:e=>setPaperTitle(e.target.value),placeholder:'عنوان برگه آزمون',style:{width:'100%',marginBottom:8}}),
-                    h('div',{className:'text-small text-muted'},toPersianDigits(selected.length)+' سؤال انتخاب شده'),
-                    h('button',{className:'btn-primary w-full',onClick:makePaper,disabled:!selected.length},'ساخت و ذخیره برگه از سؤال‌های انتخابی')
-                ),
-                h('div',{className:'card'},h('div',{className:'flex flex-wrap gap-8'},h('h3',null,'سؤال‌های بانک'),h('span',{className:'text-muted'},toPersianDigits(bank.length)+' سؤال')),
-                    h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:'جستجو در متن، درس یا مبحث...',style:{width:'100%',marginBottom:8}}),
-                    h('select',{value:subjectFilter,onChange:e=>setSubjectFilter(e.target.value),style:{width:'100%',marginBottom:10}},h('option',{value:'all'},'همه درس‌ها'),subjects.map(x=>h('option',{key:x,value:x},x))),
-                    filtered.map(q=>h('div',{key:q.id,style:{border:'1px solid #ddd',borderRadius:10,padding:10,marginBottom:8}},
-                        h('div',{className:'flex gap-8',style:{alignItems:'flex-start'}},h('input',{type:'checkbox',checked:selected.includes(q.id),onChange:e=>setSelected(v=>e.target.checked?[...v,q.id]:v.filter(x=>x!==q.id))}),h('div',{style:{flex:1}},h('b',null,q.subject+' · '+(q.topic||'بدون مبحث')),h('div',null,q.text),h('div',{className:'text-small text-muted'},(q.kind==='choice'?'چندگزینه‌ای':'تشریحی')+' · '+toPersianDigits(q.score||1)+' نمره'),(q.options||[]).map((o,i)=>h('div',{key:i,className:'text-small'},toPersianDigits(i+1)+') '+o))),h('button',{className:'btn-ghost',onClick:()=>edit(q)},'ویرایش'),h('button',{className:'btn-ghost',onClick:()=>remove(q)},'حذف'))
-                    )),
-                    !filtered.length?h('p',{className:'text-muted'},'سؤالی با این مشخصات پیدا نشد.'):null
-                ),
-                h('div',{className:'card'},h('h3',null,'برگه‌های آزمون ذخیره‌شده'),
-                    papers.map(p=>h('div',{key:p.id,className:'flex justify-between gap-8',style:{padding:8,borderBottom:'1px solid #eee',flexWrap:'wrap'}},h('div',null,h('b',null,p.title),h('div',{className:'text-small text-muted'},toPersianDigits((p.questions||[]).length)+' سؤال · '+(p.createdAt?new Date(p.createdAt).toLocaleDateString('fa-IR'):'—'))),h('button',{className:'btn-secondary',onClick:()=>printPaper(p)},'چاپ / PDF'),h('button',{className:'btn-ghost',onClick:()=>setActivePaper(p)},'نمایش'))),
-                    activePaper?h('div',{className:'card'},h('h4',null,activePaper.title),(activePaper.questions||[]).map((q,i)=>h('div',{key:q.id||i,style:{marginBottom:10}},h('b',null,toPersianDigits(i+1)+'. '+q.text),...(q.options||[]).map((o,j)=>h('div',{key:j},'□ '+o))))):null,
-                    !papers.length?h('p',{className:'text-muted'},'هنوز برگه آزمونی ساخته نشده است.'):null
-                )
+                    h('div',{style:{marginTop:10}},h('label',null,'تصویر سؤال (اختیاری)'),h('input',{type:'file',accept:'image/*',onChange:async e=>{const f=e.target.files?.[0];if(!f)return;try{field('image',await compressQuestionImage(f));}catch(err){showToast('خواندن تصویر ناموفق بود.','error');}}}),form.image?h('div',{style:{marginTop:8}},h('img',{src:form.image,alt:'تصویر سؤال',style:{maxWidth:'220px',maxHeight:160,objectFit:'contain',border:'1px solid #ddd',borderRadius:8}}),h('button',{className:'btn-ghost',onClick:()=>field('image','')},'حذف تصویر')):null),
+                    h('div',{className:'flex gap-8',style:{marginTop:10}},h('button',{className:'btn-primary',onClick:persistQuestion},editing?'ذخیره ویرایش':'＋ افزودن به بانک'),editing?h('button',{className:'btn-ghost',onClick:clear},'انصراف'):null)),
+                h('div',{className:'card'},h('h3',null,'📁 پوشه‌بندی بانک سؤال'),h('div',{className:'flex flex-wrap gap-8'},h('input',{value:folderName,onChange:e=>setFolderName(e.target.value),placeholder:'نام پوشه جدید',style:{flex:1,minWidth:150}}),h('button',{className:'btn-secondary',onClick:addFolder},'＋ ساخت پوشه')),h('div',{className:'flex flex-wrap gap-8',style:{marginTop:10}},h('button',{className:activeFolder==='all'?'btn-primary':'btn-ghost',onClick:()=>setActiveFolder('all')},'همه سؤال‌ها ('+toPersianDigits(bank.length)+')'),...folders.map(f=>h('span',{key:f.id,className:'flex gap-8',style:{alignItems:'center'}},h('button',{className:activeFolder===f.id?'btn-primary':'btn-ghost',onClick:()=>setActiveFolder(f.id)},f.name+' ('+toPersianDigits(bank.filter(q=>q.folderId===f.id).length)+')'),h('button',{className:'btn-ghost',onClick:()=>deleteFolder(f),title:'حذف پوشه'},'✕'))))),
+                h('div',{className:'card'},h('h3',null,'ساخت آزمون با انتخاب دستی سؤال‌ها'),h('input',{value:paperTitle,onChange:e=>setPaperTitle(e.target.value),placeholder:'عنوان برگه آزمون',style:{width:'100%',marginBottom:8}}),h('div',{className:'text-small text-muted'},toPersianDigits(selected.length)+' سؤال انتخاب شده'),h('button',{className:'btn-primary w-full',onClick:makePaper,disabled:!selected.length},'ساخت و ذخیره برگه از سؤال‌های انتخابی')),
+                h('div',{className:'card'},h('div',{className:'flex flex-wrap gap-8'},h('h3',null,'سؤال‌های بانک'),h('span',{className:'text-muted'},toPersianDigits(bank.length)+' سؤال')),h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:'جستجو در متن، درس یا مبحث...',style:{width:'100%',marginBottom:8}}),h('select',{value:subjectFilter,onChange:e=>setSubjectFilter(e.target.value),style:{width:'100%',marginBottom:10}},h('option',{value:'all'},'همه درس‌ها'),[...new Set(bank.map(q=>q.subject).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fa')).map(x=>h('option',{key:x,value:x},x))),
+                    filtered.map(q=>h('div',{key:q.id,style:{border:'1px solid #ddd',borderRadius:10,padding:10,marginBottom:8}},h('div',{className:'flex gap-8',style:{alignItems:'flex-start'}},h('input',{type:'checkbox',checked:selected.includes(q.id),onChange:e=>setSelected(v=>e.target.checked?[...v,q.id]:v.filter(x=>x!==q.id))}),h('div',{style:{flex:1}},h('b',null,q.subject+' · '+(q.topic||'بدون مبحث')),h('div',null,q.text),q.image?h('img',{src:q.image,style:{display:'block',maxWidth:180,maxHeight:120,objectFit:'contain',marginTop:6}}):null,h('div',{className:'text-small text-muted'},(q.kind==='choice'?'چندگزینه‌ای':'تشریحی')+' · '+toPersianDigits(q.score||1)+' نمره'),(q.options||[]).map((o,i)=>h('div',{key:i,className:'text-small'},toPersianDigits(i+1)+') '+o))),h('select',{value:q.folderId||'',onChange:e=>moveQuestion(q,e.target.value),style:{maxWidth:130}},h('option',{value:''},'بدون پوشه'),folders.map(f=>h('option',{key:f.id,value:f.id},f.name))),h('button',{className:'btn-ghost',onClick:()=>edit(q)},'ویرایش'),h('button',{className:'btn-ghost',onClick:()=>remove(q)},'حذف')))),!filtered.length?h('p',{className:'text-muted'},'سؤالی با این مشخصات پیدا نشد.'):null),
+                h('div',{className:'card'},h('h3',null,'برگه‌های آزمون ذخیره‌شده'),papers.map(p=>h('div',{key:p.id,className:'flex justify-between gap-8',style:{padding:8,borderBottom:'1px solid #eee',flexWrap:'wrap'}},h('div',null,h('b',null,p.title),h('div',{className:'text-small text-muted'},toPersianDigits((p.questions||[]).length)+' سؤال · '+(p.createdAt?new Date(p.createdAt).toLocaleDateString('fa-IR'):'—'))),h('button',{className:'btn-secondary',onClick:()=>printPaper(p)},'چاپ / PDF'),h('button',{className:'btn-ghost',onClick:()=>setActivePaper(p)},'نمایش'))),activePaper?h('div',{className:'card'},h('h4',null,activePaper.title),(activePaper.questions||[]).map((q,i)=>h('div',{key:q.id||i,style:{marginBottom:10}},h('b',null,toPersianDigits(i+1)+'. '+q.text),q.image?h('img',{src:q.image,style:{display:'block',maxWidth:200,maxHeight:140,objectFit:'contain'}}):null,...(q.options||[]).map((o,j)=>h('div',{key:j},'□ '+o))))):null,!papers.length?h('p',{className:'text-muted'},'هنوز برگه آزمونی ساخته نشده است.'):null)
             );
         }
 
@@ -5907,6 +5907,7 @@ body.app-dark option{background:#172235;color:#e5e7eb}
                 if (rootData.activeClassId && rootData.activeClassId !== activeClassId) setActiveClassId(rootData.activeClassId);
             }, [rootData.activeClassId]);
             const [tab, setTab] = React.useState('dashboard');
+            const [navDrawerOpen,setNavDrawerOpen]=React.useState(false);
             const [examEntryContext, setExamEntryContext] = React.useState(null);
             const [examPngPickerOpen, setExamPngPickerOpen] = React.useState(false);
             const [selectedExamPngKeys, setSelectedExamPngKeys] = React.useState([]);
@@ -5914,6 +5915,7 @@ body.app-dark option{background:#172235;color:#e5e7eb}
             const [taskPngPickerOpen, setTaskPngPickerOpen] = React.useState(false);
             const [selectedTaskPngIds, setSelectedTaskPngIds] = React.useState([]);
             const [taskPngSearch, setTaskPngSearch] = React.useState('');
+            const [taskPngStatusFilter, setTaskPngStatusFilter] = React.useState('both');
             const [dashboardOverlayOpen, setDashboardOverlayOpen] = React.useState(false);
             const [weeklyOpen, setWeeklyOpen] = React.useState(false);
             const [storageEstimate, setStorageEstimate] = React.useState(null);
@@ -6204,6 +6206,7 @@ body.app-dark option{background:#172235;color:#e5e7eb}
                 }
 
                 setTab(nextTab);
+                setNavDrawerOpen(false);
             };
 
             React.useEffect(() => {
@@ -6289,21 +6292,21 @@ body.app-dark option{background:#172235;color:#e5e7eb}
                         classes.length > 1 ? React.createElement('button', { className: 'btn-ghost', onClick: deleteClass, title: 'حذف کلاس' }, '🗑️') : null
                     )
                 ),
-                React.createElement('div', { className: `tab-bar ${dashboardOverlayOpen ? 'dashboard-tab-hidden' : ''}` },
-                    tabs.map(t =>
-                        React.createElement('button', {
-                            key: t.key,
-                            onClick: () => changeTab(t.key),
-                            className: tab === t.key ? 'active' : ''
-                        }, t.label)
-                    )
+                React.createElement('div',{className:'nav-drawer-trigger'},
+                    React.createElement('button',{className:'btn-primary',onClick:()=>setNavDrawerOpen(true),'aria-expanded':navDrawerOpen,'aria-label':'باز کردن فهرست بخش‌ها'},'☰ فهرست بخش‌ها'),
+                    React.createElement('span',{className:'nav-current-label'},(tabs.find(t=>t.key===tab)||{}).label||'')
+                ),
+                navDrawerOpen && React.createElement('div',{className:'nav-drawer-backdrop',onClick:()=>setNavDrawerOpen(false)}),
+                React.createElement('aside',{className:'nav-drawer '+(navDrawerOpen?'open':''),'aria-label':'فهرست بخش‌های برنامه'},
+                    React.createElement('div',{className:'nav-drawer-head'},React.createElement('b',null,'📚 بخش‌های برنامه'),React.createElement('button',{className:'btn-ghost',onClick:()=>setNavDrawerOpen(false),'aria-label':'بستن فهرست'},'✕')),
+                    tabs.map(t=>React.createElement('button',{key:t.key,onClick:()=>changeTab(t.key),className:'nav-drawer-item '+(tab===t.key?'active':'')},t.label))
                 ),
                 ['tasks', 'exams', 'scores'].includes(tab) && React.createElement('div', { className: 'card', style: { display: 'flex', justifyContent: 'center' } },
                     React.createElement('button', { onClick: async () => {
                         if (tab === 'tasks') {
                             const options = getTaskPngOptions(data);
                             if (!options.length) return showToast('هنوز تکلیفی برای تهیه تصویر ثبت نشده است.', 'error');
-                            setSelectedTaskPngIds([]); setTaskPngSearch(''); setTaskPngPickerOpen(true); return;
+                            setSelectedTaskPngIds([]); setTaskPngSearch(''); setTaskPngStatusFilter('both'); setTaskPngPickerOpen(true); return;
                         }
                         if (tab === 'exams') {
                             const options = getExamPngOptions(data);
@@ -6325,8 +6328,8 @@ body.app-dark option{background:#172235;color:#e5e7eb}
                     const toggle = id => setSelectedTaskPngIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev,id]);
                     const exportSelected = async () => {
                         if (!selectedCount) return showToast('حداقل یک تکلیف را انتخاب کنید.', 'error');
-                        const req = buildRosterRequest('tasks', data, null, selectedTaskPngIds);
-                        if (!req) return showToast('برای تکالیف انتخاب‌شده اطلاعاتی پیدا نشد.', 'error');
+                        const req = buildRosterRequest('tasks', data, null, selectedTaskPngIds, taskPngStatusFilter);
+                        if (!req) return showToast('برای وضعیت انتخاب‌شده دانش‌آموزی پیدا نشد.', 'error');
                         setTaskPngPickerOpen(false);
                         try { const r = await exportRosterPng(req); if (r !== 'cancelled') showToast(r === 'shared' ? '📤 تصویر تکالیف انتخاب‌شده آماده ارسال است.' : '📥 تصویر تکالیف انتخاب‌شده ذخیره شد.'); }
                         catch(e) { console.error(e); showToast('خطا در ساخت تصویر تکالیف.', 'error'); }
@@ -6338,6 +6341,9 @@ body.app-dark option{background:#172235;color:#e5e7eb}
                                 React.createElement('div',null,React.createElement('h3',{style:{margin:0,color:'#176b73'}},'📷 انتخاب تکالیف برای تصویر PNG'),React.createElement('div',{className:'text-small text-muted',style:{marginTop:5}},'فقط وضعیت تکالیفی که انتخاب می‌کنید در تصویر قرار می‌گیرد.')),
                                 React.createElement('button',{type:'button',onClick:()=>setTaskPngPickerOpen(false),style:{border:0,background:'#f1f5f5',borderRadius:10,padding:'7px 11px',cursor:'pointer'}},'✕')),
                             React.createElement('input',{type:'search',value:taskPngSearch,onChange:e=>setTaskPngSearch(e.target.value),placeholder:'🔎 جستجو بر اساس عنوان، پوشه یا تاریخ...', 'aria-label':'جستجو در تکالیف',style:{...field,width:'100%',boxSizing:'border-box',margin:'14px 0 10px'}}),
+                            React.createElement('div',{style:{border:'1px solid #dce9e6',borderRadius:12,padding:12,marginBottom:12,background:'#f8fcfb'}},
+                                React.createElement('strong',{style:{display:'block',marginBottom:9,color:'#245e5a'}},'👥 دانش‌آموزان قابل نمایش در گزارش'),
+                                React.createElement('div',{style:{display:'flex',gap:8,flexWrap:'wrap'}},[ ['both','تکمیل‌کنندگان + دارای نقص'],['done','فقط تکمیل‌کنندگان'],['incomplete','فقط افراد دارای نقص'],['all','همه وضعیت‌ها'] ].map(([value,label])=>React.createElement('button',{key:value,type:'button',onClick:()=>setTaskPngStatusFilter(value),style:{border:taskPngStatusFilter===value?'2px solid #16877d':'1px solid #d5e1df',background:taskPngStatusFilter===value?'#e7f7f3':'#fff',color:'#294b49',borderRadius:9,padding:'8px 10px',fontFamily:'inherit',fontWeight:taskPngStatusFilter===value?800:500,cursor:'pointer'}},label)))),
                             React.createElement('div',{style:{display:'flex',gap:8,flexWrap:'wrap',margin:'4px 0 14px'}},
                                 React.createElement('button',{type:'button',onClick:()=>setSelectedTaskPngIds(prev=>Array.from(new Set([...prev,...visible.map(x=>x.id)]))),style:{border:'1px solid #b9d9d5',borderRadius:9,background:'#effaf8',padding:'7px 11px',cursor:'pointer',fontFamily:'inherit'}},'انتخاب موارد نمایش‌داده‌شده'),
                                 React.createElement('button',{type:'button',onClick:()=>setSelectedTaskPngIds([]),style:{border:'1px solid #e1e7e7',borderRadius:9,background:'#fff',padding:'7px 11px',cursor:'pointer',fontFamily:'inherit'}},'لغو انتخاب همه'),
@@ -6392,7 +6398,7 @@ body.app-dark option{background:#172235;color:#e5e7eb}
                 tab === 'classInsights' && React.createElement(ClassInsights, { data }),
                 tab === 'smartAlerts' && React.createElement(SmartAlerts, { data }),
                 tab === 'periodCompare' && React.createElement(PeriodComparison, { data }),
-                tab === 'questionBank' && React.createElement(QuestionBank, { data, save, showToast }),
+                tab === 'questionBank' && React.createElement(QuestionBank, { data, save, showToast, meta: rootData.meta || {}, className: activeClass.name || '' }),
                 tab === 'dossier' && React.createElement(StudentDossier, { data }),
                 tab === 'parentMeetings' && React.createElement(ParentMeetings, { data, save, showToast }),
                 tab === 'teacherNotes' && React.createElement(TeacherNotes, { data, save, showToast }),
